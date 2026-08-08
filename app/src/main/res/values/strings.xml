@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">NSCheatManager</string>
+    <string name="app_description">Manage Nintendo Switch cheats.</string>
+</resources>
