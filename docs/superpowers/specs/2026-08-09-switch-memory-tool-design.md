@@ -53,7 +53,7 @@ The local mirror retains the Atmosphère relative layout:
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/notes.txt
+atmosphere/contents/<TID>/cheats/<BID>/notes.txt
 ```
 
 The application owns the physical mirror root to avoid storage-permission differences across Android releases. Imported files are copied into that mirror. Room stores indexes and state rather than the primary text content.
@@ -90,8 +90,9 @@ The top-right overflow menu contains:
 
 - A checkable **Edit mode** item. Checked means edit mode; unchecked means view mode.
 - **Recognize current game again**, combining recognition and TID/BID refresh as one manual fallback.
-- **Download from Switch** and **Upload to Switch** for the current BID cheat and `notes.txt`.
+- **Download from Switch** and **Upload to Switch** for the current BID cheat and its `<BID>/notes.txt`.
 - **Package and share ZIP**.
+- **Import ZIP**, immediately below package/share.
 - **Settings**.
 - **About**.
 
@@ -158,7 +159,7 @@ Synchronization is limited to the currently recognized game and these two remote
 
 ```text
 /atmosphere/contents/<TID>/cheats/<BID>.txt
-/atmosphere/contents/<TID>/cheats/notes.txt
+/atmosphere/contents/<TID>/cheats/<BID>/notes.txt
 ```
 
 Download stages each file in temporary local storage. The cheat file must parse successfully before replacing the local mirror; a missing remote file is reported and does not create an empty file. Existing local content requires overwrite confirmation.
@@ -171,12 +172,25 @@ For the recognized TID/BID, the app creates `<TID>_<BID>.zip` with the preserved
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/notes.txt
+atmosphere/contents/<TID>/cheats/<BID>/notes.txt
 ```
 
 The archive is written to app-controlled cache, exposed through a `FileProvider`, and shared using the Android Sharesheet with temporary read permission. Missing `notes.txt` is represented by an empty notes file only after user confirmation; a missing cheat file blocks packaging.
 
-`notes.txt` is plain UTF-8 text. It has independent view and edit modes and is never parsed as cheat code. It participates in local storage, FTP synchronization, ZIP packaging, and sharing.
+`notes.txt` is plain UTF-8 text stored below the current Build ID directory. It has independent view and edit modes and is never parsed as cheat code. It participates in local storage, FTP synchronization, ZIP packaging, import, and sharing.
+
+### 10.1 ZIP import
+
+**Import ZIP** uses Android's file picker and accepts one game/build package at a time. A valid archive contains exactly this required cheat path and may contain the matching optional notes path:
+
+```text
+atmosphere/contents/<TID>/cheats/<BID>.txt
+atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+```
+
+`<TID>` must be a 16-character hexadecimal Title ID. `<BID>` must be a valid hexadecimal Build ID and must be identical in both paths. Files outside this structure cause the entire import to fail; the importer does not silently ignore extra content.
+
+The importer rejects absolute paths, backslash/path-normalization ambiguities, `.` or `..` segments, symbolic links, duplicate normalized paths, encrypted entries, unsupported compression, excessive entry counts, oversized entries, and archives whose expanded size exceeds the configured limit. It extracts only to a newly created app-controlled temporary directory. After full validation and successful cheat parsing, the app previews TID, BID, file sizes, group count, and overwrite impact. User confirmation atomically replaces the local mirror and refreshes the Room index. Import never uploads to Switch, executes cheats, or changes the selected device.
 
 ## 11. Connection and error model
 
@@ -189,10 +203,11 @@ Errors are categorized as connection, game recognition, file/path, parse/validat
 - Parser tests cover groups, comments, blank lines, casing, encodings, malformed hex, and precise line numbers.
 - Interpreter tests cover every accepted opcode form, pointer chains, little-endian conversion, register behavior, overflow, and every rejected class.
 - Fake sys-botbase server tests cover fragmented responses, serialization, timeouts, disconnects, automatic recognition, reads, writes, freeze/unFreeze, lock cleanup, and partial execution.
-- Fake passive FTP server tests cover missing directories, downloads, staged uploads, rename fallback, overwrite confirmation, notes, and size verification.
+- Fake passive FTP server tests cover missing directories, downloads, staged uploads, rename fallback, overwrite confirmation, Build-ID-scoped notes, and size verification.
+- ZIP import tests cover valid packages, optional notes, mismatched TID/BID paths, extra files, duplicate normalized paths, traversal, absolute paths, symlinks, encrypted entries, size limits, malformed cheats, confirmation, and atomic replacement.
 - Fake Noexs server tests assert correct framing and command value `0x18`, timeouts, repeat taps, and device targeting.
 - Repository tests cover per-device state isolation, TID/BID lookup, mirror replacement, notes, and migrations.
-- UI tests cover connect-triggered recognition, manual re-recognition, no-match behavior, check-to-execute, uncheck-without-rollback, menu-controlled edit/view modes, IP-row actions, device switching, language switching, ZIP sharing, manual lock/unlock, and disabled unsafe actions.
+- UI tests cover connect-triggered recognition, manual re-recognition, no-match behavior, check-to-execute, uncheck-without-rollback, menu-controlled edit/view modes, IP-row actions, device switching, language switching, ZIP sharing/import, manual lock/unlock, and disabled unsafe actions.
 - About-screen tests cover the build-derived version, localized explanatory text, credit and risk sections, visible QQ group number, valid HTTPS intent, and browser fallback.
 - Real-device acceptance covers Android 8.0, a current Android release, and an authorized CFW Switch with the required services.
 
@@ -216,6 +231,7 @@ The release is accepted when it can:
 14. Freeze and unfreeze a manually selected address while preventing accidental edits to its locked parameters.
 15. Display an About screen with the build-derived version, usage notes, credits, risk warning, and a working QQ group link for group `457965140`.
 16. Build and publish a versioned APK with matching SHA-256 checksum through the documented GitHub workflow.
+17. Import only a fully validated ZIP containing the exact current Atmosphère TID/BID cheat layout and optional Build-ID-scoped notes, without accepting extra or unsafe entries.
 
 ## 14. GitHub repository and distribution
 
