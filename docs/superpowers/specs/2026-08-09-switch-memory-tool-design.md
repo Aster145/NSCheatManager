@@ -4,7 +4,7 @@
 
 Switch Memory Tool is a native Android client for a user-owned, authorized Nintendo Switch running compatible CFW services. The first release connects to the current foreground game, displays its identifiers and memory bases, provides typed memory reads and writes, executes a safe subset of Atmosphère cheat codes once, synchronizes cheat files over anonymous FTP, and can request dmnt detachment through a compatible Noexs sysmodule.
 
-The application does not provide public cheat downloads, online-game automation, account or ban bypass, background freezing, or periodic memory writes.
+The application does not provide public cheat downloads, online-game automation, account or ban bypass, cheat-group background execution, or arbitrary periodic memory writes. The manual memory tool may explicitly lock individual addresses through sys-botbase `freeze`/`unFreeze` until the user unlocks them.
 
 ## 2. Platform and technology
 
@@ -15,6 +15,7 @@ The application does not provide public cheat downloads, online-game automation,
 - Room for devices, cheat indexes, notes metadata, and execution history.
 - DataStore for the selected device and lightweight preferences.
 - Android Storage Access Framework for imports and Android Sharesheet for exports.
+- Localized Android resources for Simplified Chinese and English, selectable in app settings.
 
 ## 3. External services
 
@@ -56,11 +57,13 @@ atmosphere/contents/<TID>/cheats/notes.txt
 
 The application owns the physical mirror root to avoid storage-permission differences across Android releases. Imported files are copied into that mirror. Room stores indexes and state rather than the primary text content.
 
-Domain use cases cover device management, connection, foreground-game recognition, manual memory access, cheat import and lookup, one-shot cheat execution, FTP synchronization, editing, ZIP export, sharing, and dmnt detachment. UI code never sends protocol commands or interprets opcodes directly.
+Domain use cases cover device management, connection, automatic foreground-game recognition, manual memory access and locking, cheat import and lookup, one-shot cheat execution, FTP synchronization, editing, ZIP export, sharing, and dmnt detachment. UI code never sends protocol commands or interprets opcodes directly.
 
 ## 5. Device and session behavior
 
 Users can add, edit, delete, and select multiple device profiles from a top-level drop-down. The last selected profile is restored at launch.
+
+The main device row contains the profile drop-down followed by two actions: a connection toggle labelled **Connect** or **Disconnect**, and a separate **Detach dmnt** button. A successful sys-botbase connection automatically performs foreground-game recognition once, retrieving TID, BID, main base, and heap base and loading the matching local cheat file. Manual recognition and BID/TID refresh are one operation named **Recognize current game again**.
 
 Switching devices closes the old sockets but does not clear game information or cheat check states. Each device separately retains its last recognized TID, BID, bases, loaded file, and checked groups. On reconnection, the app automatically refreshes identity and bases:
 
@@ -72,9 +75,9 @@ Switching devices closes the old sockets but does not clear game information or 
 
 ## 6. Screens and interactions
 
-### 6.1 Game screen
+### 6.1 Cheat-first main screen
 
-The screen contains the device selector, connection status, connect/disconnect action, and a prominent **Recognize current game** button. Recognition retrieves and displays the current Title ID, Build ID, main base, and heap base. It then looks up:
+The default landing screen is cheat-first. It contains the selected device row, connection status, compact current-game identity, and matching cheat groups. Recognition runs automatically after connection and looks up:
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
@@ -82,11 +85,19 @@ atmosphere/contents/<TID>/cheats/<BID>.txt
 
 When found, the corresponding cheat groups load automatically. Otherwise, the app reports that no cheat file exists for the current version and offers import or FTP download.
 
-The screen also contains **Download from Switch**, **Upload to Switch**, and **Detach dmnt** actions. All require a selected, reachable device; file operations additionally require a validated TID and BID.
+The top-right overflow menu contains:
+
+- A checkable **Edit mode** item. Checked means edit mode; unchecked means view mode.
+- **Recognize current game again**, combining recognition and TID/BID refresh as one manual fallback.
+- **Download from Switch** and **Upload to Switch** for the current BID cheat and `notes.txt`.
+- **Package and share ZIP**.
+- **Settings**.
+
+The **Detach dmnt** action remains beside the IP and connection toggle rather than inside the menu. Memory and file actions require the relevant service and a validated game identity.
 
 ### 6.2 Cheats screen
 
-The screen displays the current TID, BID, mirror path, and cheat groups. It defaults to view mode.
+The screen displays the current TID, BID, mirror path, and cheat groups. It defaults to view mode. View/edit switching is controlled only by the checkable overflow-menu item, not a persistent segmented control.
 
 - Checking a group immediately validates and executes it once.
 - Successful groups remain checked and show their last execution time.
@@ -95,15 +106,17 @@ The screen displays the current TID, BID, mirror path, and cheat groups. It defa
 - Incompatible groups show the unsupported opcode and source line and cannot be checked.
 - During execution the affected group cannot be tapped repeatedly.
 
-Edit mode allows changes to group names and code. Saving reparses and validates the whole file, writes through a temporary file, updates the index, and returns to view mode. Leaving with unsaved changes requires confirmation. Saving a syntactically valid file may retain groups that use unsupported instructions, but those groups remain visibly non-executable.
+Edit mode exposes tabs for the current `<BID>.txt` and `notes.txt`. It allows changes to group names, code, and notes. Saving reparses and validates the whole cheat file, writes through a temporary file, updates the index, unchecks **Edit mode**, and returns to view mode. Cancelling or leaving with unsaved changes requires confirmation and also returns to view mode. Saving a syntactically valid file may retain groups that use unsupported instructions, but those groups remain visibly non-executable.
 
 ### 6.3 Memory screen
 
 The memory tool supports absolute, main-relative, and heap-relative addresses. Values support hexadecimal bytes, signed or unsigned integer widths of 8/16/32/64 bits as applicable to the UI control, Float, and Double. Encoding is always little-endian. Reads and writes are separate operations; manual writes show an address, byte count, and value confirmation. A single read is limited to 4 KiB by default.
 
+A checkable **Lock** control appears after **Read** and **Write**. Checking it resolves the current address to an absolute address and invokes sys-botbase `freeze`; unchecking invokes `unFreeze`. Address mode, address, type, and value controls are disabled while locked. Locks are tracked per device. A normal disconnect first releases locks created by this app; after an abnormal disconnect they are shown as pending cleanup and reconciled after reconnection. Cheat groups remain one-shot and never use locking implicitly.
+
 ### 6.4 Settings and library
 
-Settings manages device profiles and protocol ports, connection and command timeouts, imported cheat files, and local mirror entries. Notes use a dedicated editor for `notes.txt` and never become cheat instructions.
+Settings manages multiple default device profiles, their aliases and IP addresses, per-device ports, connection and command timeouts, imported cheat files, and local mirror entries. One profile is selected as the default. It also provides an immediate interface-language selector for **简体中文** and **English**. Notes use a dedicated editor for `notes.txt` and never become cheat instructions.
 
 ## 7. Supported Atmosphère cheat subset
 
@@ -117,7 +130,7 @@ The first release uses a strict allowlist. A selected group executes only if eve
 - `0x9`: integer add, subtract, shifts, AND, OR, XOR, and move. Floating-point operations are excluded.
 - `0xA`: write a register value through supported register, fixed-offset, main-relative, or heap-relative address forms.
 
-The release excludes conditionals, else blocks, loops, key triggers, saved/static registers, debug logging, Alias/ASLR regions, floating-point register arithmetic, freezing, and periodic execution. Unsupported forms produce a source-located validation error and are never silently ignored.
+The release excludes conditionals, else blocks, loops, key triggers, saved/static registers, debug logging, Alias/ASLR regions, floating-point register arithmetic, cheat-group freezing, and periodic cheat execution. Unsupported forms produce a source-located validation error and are never silently ignored. Manual address locking is a separate memory-tool feature and does not expand the cheat interpreter.
 
 ## 8. Execution safeguards
 
@@ -161,11 +174,11 @@ Errors are categorized as connection, game recognition, file/path, parse/validat
 
 - Parser tests cover groups, comments, blank lines, casing, encodings, malformed hex, and precise line numbers.
 - Interpreter tests cover every accepted opcode form, pointer chains, little-endian conversion, register behavior, overflow, and every rejected class.
-- Fake sys-botbase server tests cover fragmented responses, serialization, timeouts, disconnects, reads, writes, and partial execution.
+- Fake sys-botbase server tests cover fragmented responses, serialization, timeouts, disconnects, automatic recognition, reads, writes, freeze/unFreeze, lock cleanup, and partial execution.
 - Fake passive FTP server tests cover missing directories, downloads, staged uploads, rename fallback, overwrite confirmation, notes, and size verification.
 - Fake Noexs server tests assert correct framing and command value `0x18`, timeouts, repeat taps, and device targeting.
 - Repository tests cover per-device state isolation, TID/BID lookup, mirror replacement, notes, and migrations.
-- UI tests cover recognition, no-match behavior, check-to-execute, uncheck-without-rollback, edit/view modes, device switching, ZIP sharing, and disabled unsafe actions.
+- UI tests cover connect-triggered recognition, manual re-recognition, no-match behavior, check-to-execute, uncheck-without-rollback, menu-controlled edit/view modes, IP-row actions, device switching, language switching, ZIP sharing, manual lock/unlock, and disabled unsafe actions.
 - Real-device acceptance covers Android 8.0, a current Android release, and an authorized CFW Switch with the required services.
 
 ## 13. Acceptance criteria
@@ -183,4 +196,6 @@ The release is accepted when it can:
 9. Package both files with Atmosphère paths and share the ZIP through Android.
 10. Send framed Noexs `DetachDmnt` command `0x18` without attaching or pausing.
 11. Avoid automatic replay after disconnect, device switch, identity refresh, upload, or UI recomposition.
-
+12. Automatically recognize the current game after a successful connection and expose one combined manual re-recognition action.
+13. Switch the complete interface between Simplified Chinese and English.
+14. Freeze and unfreeze a manually selected address while preventing accidental edits to its locked parameters.
