@@ -1,14 +1,15 @@
-# Switch Memory Tool for Android — Design Specification
+# NSCheatManager for Android — Design Specification
 
 ## 1. Purpose and scope
 
-Switch Memory Tool is a native Android client for a user-owned, authorized Nintendo Switch running compatible CFW services. The first release connects to the current foreground game, displays its identifiers and memory bases, provides typed memory reads and writes, executes a safe subset of Atmosphère cheat codes once, synchronizes cheat files over anonymous FTP, and can request dmnt detachment through a compatible Noexs sysmodule.
+NSCheatManager, displayed as **NS金手指管理** in Simplified Chinese and **NSCheatManager** in English, is a native Android client for a user-owned, authorized Nintendo Switch running compatible CFW services. The first release connects to the current foreground game, displays its identifiers and memory bases, provides typed memory reads and writes, executes a safe subset of Atmosphère cheat codes once, synchronizes cheat files over anonymous FTP, and can request dmnt detachment through a compatible Noexs sysmodule.
 
 The application does not provide public cheat downloads, online-game automation, account or ban bypass, cheat-group background execution, or arbitrary periodic memory writes. The manual memory tool may explicitly lock individual addresses through sys-botbase `freeze`/`unFreeze` until the user unlocks them.
 
 ## 2. Platform and technology
 
 - Android 8.0 (API 26) or later.
+- Android project name `NSCheatManager` and application ID `com.nscheatmanager.app`.
 - Kotlin, Jetpack Compose, and Material 3.
 - One Android application module with package-level layering.
 - Coroutines and StateFlow for asynchronous work and UI state.
@@ -214,3 +215,28 @@ The release is accepted when it can:
 13. Switch the complete interface between Simplified Chinese and English.
 14. Freeze and unfreeze a manually selected address while preventing accidental edits to its locked parameters.
 15. Display an About screen with the build-derived version, usage notes, credits, risk warning, and a working QQ group link for group `457965140`.
+16. Build and publish a versioned APK with matching SHA-256 checksum through the documented GitHub workflow.
+
+## 14. GitHub repository and distribution
+
+The source repository is a public GitHub repository named `NSCheatManager` with `main` as its default branch. The project is distributed under GPL-3.0. Repository and application documentation must preserve the licenses and attribution required by reused source and clearly state that NSCheatManager is an unofficial community project not affiliated with or endorsed by Nintendo, Atmosphère, sys-botbase, or Noexs.
+
+The repository includes:
+
+- A root `README.md` with Simplified Chinese first and an English section second.
+- Setup requirements for CFW, sys-botbase, anonymous FTP, and the compatible Noexs sysmodule.
+- Android build, debug, APK installation, device configuration, and troubleshooting instructions.
+- Supported Atmosphère opcode forms and explicit unsupported behavior.
+- Screenshots of the cheat-first screen, edit mode, memory tool, settings, and About page.
+- Memory-write, CFW, crash, data-loss, and ban-risk disclaimers.
+- Open-source acknowledgements, GPL-3.0 notice, QQ group `457965140`, and its approved join link.
+- `LICENSE`, Android `.gitignore`, contribution guidance, issue templates, feature-request template, and release-notes template.
+
+GitHub Actions runs unit tests and Android lint and builds an APK from a reproducible Gradle environment. Tagging `v<version>` creates a release candidate workflow whose outputs include:
+
+```text
+NSCheatManager-v<version>.apk
+NSCheatManager-v<version>.apk.sha256
+```
+
+The initial tag is `v1.0.0` and its release title is `NSCheatManager v1.0.0`. Release notes are bilingual, with Chinese first. Signing credentials are never committed; release signing uses encrypted GitHub Actions secrets or a locally signed artifact. Publishing a GitHub repository or Release remains an explicit user-approved external action.
