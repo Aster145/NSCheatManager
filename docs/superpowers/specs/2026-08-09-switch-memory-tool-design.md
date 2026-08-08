@@ -92,6 +92,7 @@ The top-right overflow menu contains:
 - **Download from Switch** and **Upload to Switch** for the current BID cheat and `notes.txt`.
 - **Package and share ZIP**.
 - **Settings**.
+- **About**.
 
 The **Detach dmnt** action remains beside the IP and connection toggle rather than inside the menu. Memory and file actions require the relevant service and a validated game identity.
 
@@ -117,6 +118,18 @@ A checkable **Lock** control appears after **Read** and **Write**. Checking it r
 ### 6.4 Settings and library
 
 Settings manages multiple default device profiles, their aliases and IP addresses, per-device ports, connection and command timeouts, imported cheat files, and local mirror entries. One profile is selected as the default. It also provides an immediate interface-language selector for **简体中文** and **English**. Notes use a dedicated editor for `notes.txt` and never become cheat instructions.
+
+### 6.5 About
+
+The **About** item in the top-right overflow menu opens a dedicated screen showing the application name, icon, semantic version, purpose, open-source credits, license information, and a concise risk disclaimer. The first release displays version `1.0.0`; implementation must read the displayed value from Android build metadata rather than duplicating a hard-coded UI string.
+
+Credits identify sys-botbase for remote control and memory access, Atmosphère for CFW and cheat-format documentation, and the compatible Noexs project for the dmnt detach protocol. The screen states that the app is for user-owned or authorized devices and that CFW, remote debugging, memory modification, and incompatible codes may cause crashes, data loss, or bans.
+
+The screen includes **Join QQ group** with visible group number `457965140`. Activating it launches the system handler for this HTTPS group-sharing URL, with a browser fallback when QQ is unavailable:
+
+```text
+https://qun.qq.com/universal-share/share?ac=1&authKey=fPqdvU2BW8s731iMkSW6OnVdc2ArUNe0ocLG%2FrbpMsEwJ4Ke1k7ksAmlkPkkMioj&busi_data=eyJncm91cENvZGUiOiI0NTc5NjUxNDAiLCJ0b2tlbiI6IkRRL1VKeG5BNmViMm9iRVVLTlUwYzVGK29nMG1IZGEyRWI0STh1TkszQ0NkeTdlTEtINTdqRUl3ZzJobGNNV0MiLCJ1aW4iOiIxNDUxMTc5NDgxIn0%3D&data=DbCHiE8dRZyXk6WkCg8btr6oOQrPK5vR_rCm0YXC5MrwseWitvCVjXfMvfh-qFBFJXSpAUVuzhIDT59CYoyWEA&svctype=4&tempid=h5_group_info
+```
 
 ## 7. Supported Atmosphère cheat subset
 
@@ -179,6 +192,7 @@ Errors are categorized as connection, game recognition, file/path, parse/validat
 - Fake Noexs server tests assert correct framing and command value `0x18`, timeouts, repeat taps, and device targeting.
 - Repository tests cover per-device state isolation, TID/BID lookup, mirror replacement, notes, and migrations.
 - UI tests cover connect-triggered recognition, manual re-recognition, no-match behavior, check-to-execute, uncheck-without-rollback, menu-controlled edit/view modes, IP-row actions, device switching, language switching, ZIP sharing, manual lock/unlock, and disabled unsafe actions.
+- About-screen tests cover the build-derived version, localized explanatory text, credit and risk sections, visible QQ group number, valid HTTPS intent, and browser fallback.
 - Real-device acceptance covers Android 8.0, a current Android release, and an authorized CFW Switch with the required services.
 
 ## 13. Acceptance criteria
@@ -199,3 +213,4 @@ The release is accepted when it can:
 12. Automatically recognize the current game after a successful connection and expose one combined manual re-recognition action.
 13. Switch the complete interface between Simplified Chinese and English.
 14. Freeze and unfreeze a manually selected address while preventing accidental edits to its locked parameters.
+15. Display an About screen with the build-derived version, usage notes, credits, risk warning, and a working QQ group link for group `457965140`.
