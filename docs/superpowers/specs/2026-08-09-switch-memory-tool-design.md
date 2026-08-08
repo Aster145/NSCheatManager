@@ -38,7 +38,7 @@ The three protocols use independent clients and connection state. FTP uses passi
 
 `SwitchFtpClient` performs constrained file operations below `/atmosphere/contents`. It supports existence checks, directory creation, download to a temporary file, temporary upload, rename, and size verification.
 
-`NoexsClient` implements the compatible Noexs command framing and sends only `DetachDmnt` (`0x18`) for this feature. The command must not be emitted as an unframed raw byte. It does not automatically attach, pause, resume, or disconnect another debugger.
+`NoexsClient` implements the compatible PointerSearcher-SE/Noexs exchange for this feature. It opens TCP port 7331, sends the single command byte `DetachDmnt` (`0x18`), then reads exactly one 4-byte little-endian result code; zero is success and nonzero is decoded into module/result fields. It does not automatically attach, pause, resume, or send the Noexs disconnect command.
 
 ### 4.2 Cheat layer
 
@@ -205,7 +205,7 @@ Errors are categorized as connection, game recognition, file/path, parse/validat
 - Fake sys-botbase server tests cover fragmented responses, serialization, timeouts, disconnects, automatic recognition, reads, writes, freeze/unFreeze, lock cleanup, and partial execution.
 - Fake passive FTP server tests cover missing directories, downloads, staged uploads, rename fallback, overwrite confirmation, Build-ID-scoped notes, and size verification.
 - ZIP import tests cover valid packages, optional notes, mismatched TID/BID paths, extra files, duplicate normalized paths, traversal, absolute paths, symlinks, encrypted entries, size limits, malformed cheats, confirmation, and atomic replacement.
-- Fake Noexs server tests assert correct framing and command value `0x18`, timeouts, repeat taps, and device targeting.
+- Fake Noexs server tests assert the exact one-byte command `0x18`, 4-byte little-endian result handling, timeouts, repeat taps, and device targeting.
 - Repository tests cover per-device state isolation, TID/BID lookup, mirror replacement, notes, and migrations.
 - UI tests cover connect-triggered recognition, manual re-recognition, no-match behavior, check-to-execute, uncheck-without-rollback, menu-controlled edit/view modes, IP-row actions, device switching, language switching, ZIP sharing/import, manual lock/unlock, and disabled unsafe actions.
 - About-screen tests cover the build-derived version, localized explanatory text, credit and risk sections, visible QQ group number, valid HTTPS intent, and browser fallback.
@@ -224,7 +224,7 @@ The release is accepted when it can:
 7. Download and upload the current BID cheat and `notes.txt` over anonymous FTP.
 8. View and edit cheat and notes files without corrupting the last valid copy.
 9. Package both files with Atmosphère paths and share the ZIP through Android.
-10. Send framed Noexs `DetachDmnt` command `0x18` without attaching or pausing.
+10. Send the compatible Noexs one-byte `DetachDmnt` command `0x18`, validate its 4-byte result, and never attach or pause.
 11. Avoid automatic replay after disconnect, device switch, identity refresh, upload, or UI recomposition.
 12. Automatically recognize the current game after a successful connection and expose one combined manual re-recognition action.
 13. Switch the complete interface between Simplified Chinese and English.
