@@ -22,6 +22,8 @@ import com.nscheatmanager.app.ui.editor.CheatEditorViewModel
 import com.nscheatmanager.app.ui.game.GameScreenActions
 import com.nscheatmanager.app.ui.game.GameViewModel
 import com.nscheatmanager.app.ui.settings.SettingsViewModel
+import com.nscheatmanager.app.ui.memory.MemoryActions
+import com.nscheatmanager.app.ui.memory.MemoryViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
@@ -42,6 +44,7 @@ class MainActivity : AppCompatActivity() {
             dependencies.editorDrafts,
         )
     }
+    private val memoryViewModel by viewModels<MemoryViewModel> { MemoryViewModel.Factory(gameViewModel) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +67,7 @@ class MainActivity : AppCompatActivity() {
                 val state by settingsViewModel.uiState.collectAsStateWithLifecycle()
                 val gameState by gameViewModel.uiState.collectAsStateWithLifecycle()
                 val editorState by editorViewModel.uiState.collectAsStateWithLifecycle()
+                val memoryState by memoryViewModel.uiState.collectAsStateWithLifecycle()
                 NSCheatManagerApp(
                     settingsState = state,
                     settingsActions = SettingsActions(
@@ -124,6 +128,14 @@ class MainActivity : AppCompatActivity() {
                     editorEffects = editorViewModel.effects,
                     editorEffectActions = EditorEffectActions(
                         saved = { saved -> gameViewModel.onLocalFileSaved(saved.identity, saved.file) },
+                    ),
+                    memoryState = memoryState,
+                    memoryActions = MemoryActions(
+                        mode = memoryViewModel::selectMode, address = memoryViewModel::updateAddress,
+                        type = memoryViewModel::selectType, value = memoryViewModel::updateValue,
+                        length = memoryViewModel::updateLength, read = memoryViewModel::read,
+                        write = memoryViewModel::requestWrite, lock = memoryViewModel::toggleLock,
+                        confirm = memoryViewModel::confirmWrite, dismiss = memoryViewModel::dismissWrite,
                     ),
                 )
             }

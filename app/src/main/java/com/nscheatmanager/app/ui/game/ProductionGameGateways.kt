@@ -7,6 +7,10 @@ import com.nscheatmanager.app.domain.DeviceRepository
 import com.nscheatmanager.app.domain.DeviceSession
 import com.nscheatmanager.app.domain.DeviceSessionState
 import com.nscheatmanager.app.domain.GameOperationKey
+import com.nscheatmanager.app.core.model.MemoryTarget
+import com.nscheatmanager.app.core.model.ValueType
+import com.nscheatmanager.app.domain.LockedValue
+import com.nscheatmanager.app.domain.MemoryReadResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -54,6 +58,11 @@ class DeviceSessionGateway(private val delegate: DeviceSession) : GameSessionGat
     override suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) {
         delegate.uncheckGroup(expected, groupName)
     }
+
+    override suspend fun readMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?): MemoryReadResult = delegate.readValue(expected, target, type, count)
+    override suspend fun writeMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) { delegate.writePrepared(expected, target, type, bytes) }
+    override suspend fun lockMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue = delegate.lockPrepared(expected, target, type, bytes)
+    override suspend fun unlockMemory(expected: GameOperationKey, address: ULong) { delegate.unlockValue(expected, address) }
 
     override suspend fun close() {
         delegate.closeAndJoin()

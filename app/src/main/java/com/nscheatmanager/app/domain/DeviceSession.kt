@@ -299,6 +299,32 @@ class DeviceSession(
         }
     }
 
+    suspend fun readValue(expected: GameOperationKey, target: MemoryTarget, type: ValueType, hexByteCount: Int? = null): MemoryReadResult =
+        readyOperation(expected) { token, live, identity ->
+            try { memoryUseCases.readValue(live.client, identity, target, type, hexByteCount).also { checkpoint(token) } }
+            catch (error: Throwable) { if (isConnectionLoss(error)) markAbnormalLoss(token, error); throw error }
+        }
+
+    suspend fun writePrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) =
+        readyOperation(expected) { token, live, identity ->
+            try {
+                val prepared = memoryUseCases.prepareWrite(identity, target, type, bytes.copyOf())
+                checkpoint(token)
+                live.client.write(MemoryTarget.Absolute(prepared.absoluteAddress), prepared.bytes.copyToByteArray())
+                checkpoint(token)
+            } catch (error: Throwable) { if (isConnectionLoss(error)) markAbnormalLoss(token, error); throw error }
+        }
+
+    suspend fun lockPrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue =
+        readyOperation(expected) { token, live, identity ->
+            val prepared = memoryUseCases.prepareLock(identity, target, type, bytes.copyOf())
+            commitPreparedLock(token, live, identity, prepared)
+        }
+
+    suspend fun unlockValue(expected: GameOperationKey, absoluteAddress: ULong) {
+        readyOperation(expected) { token, live, _ -> unlockPrepared(token, live, absoluteAddress) }
+    }
+
     suspend fun writeValue(
         target: MemoryTarget,
         type: ValueType,
@@ -320,6 +346,10 @@ class DeviceSession(
         value: String,
     ): LockedValue = readyOperation { token, live, identity ->
         val prepared = memoryUseCases.prepareLock(identity, target, type, value)
+        commitPreparedLock(token, live, identity, prepared)
+    }
+
+    private suspend fun commitPreparedLock(token: Long, live: LiveConnection, identity: GameIdentity, prepared: LockedValue): LockedValue {
         synchronized(controlLock) {
             require(prepared.absoluteAddress !in activeLocksByDevice[live.device.id].orEmpty()) {
                 "This absolute address is already locked"
@@ -380,10 +410,12 @@ class DeviceSession(
             cleanupUntrackedLock(live, identity, lock)
             throw error
         }
-        lock
+        return lock
     }
 
-    suspend fun unlockValue(absoluteAddress: ULong) = readyOperation { token, live, _ ->
+    suspend fun unlockValue(absoluteAddress: ULong) = readyOperation { token, live, _ -> unlockPrepared(token, live, absoluteAddress) }
+
+    private suspend fun unlockPrepared(token: Long, live: LiveConnection, absoluteAddress: ULong) {
         val lock = synchronized(controlLock) {
             activeLocksByDevice[live.device.id]?.get(absoluteAddress)?.lock
                 ?: throw IllegalArgumentException("No app-created lock exists at this address")

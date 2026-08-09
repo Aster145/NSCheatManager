@@ -114,4 +114,11 @@
     <string name="diagnostic_malformed_response">Line %1$d · malformed device response</string>
     <string name="diagnostic_response_too_large">Line %1$d · response exceeds %2$s bytes</string>
     <string name="diagnostic_command_too_large">Line %1$d · command bytes actual/maximum %2$s</string>
+    <string name="memory_title">Memory tool</string><string name="memory_subtitle">Switch little-endian · maximum single read 4 KiB</string>
+    <string name="memory_absolute">Absolute</string><string name="memory_address">Address / offset (hex)</string><string name="memory_length">Read length (bytes)</string><string name="memory_value">Value</string>
+    <string name="memory_read">Read</string><string name="memory_write">Write</string><string name="memory_lock">Lock</string><string name="memory_copy">Copy result</string>
+    <string name="memory_confirm_title">Confirm memory write</string><string name="memory_confirm_detail">Target: %1$s\nBytes: %2$d\nData: %3$s</string>
+    <string name="memory_pending_cleanup">Pending lock cleanup: %1$d</string><string name="memory_error_session">Connect and recognize the current game first.</string>
+    <string name="memory_error_address">Enter a valid unsigned hexadecimal address.</string><string name="memory_error_length">Read length must be 1–4096 bytes.</string>
+    <string name="memory_error_value">The value is invalid for this type.</string><string name="memory_error_operation">Memory operation failed.</string><string name="memory_error_changed">Device or game changed; result was discarded.</string>
 </resources>

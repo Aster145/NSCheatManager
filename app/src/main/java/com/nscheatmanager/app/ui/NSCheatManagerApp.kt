@@ -50,6 +50,9 @@ import com.nscheatmanager.app.ui.settings.DeviceEditorUiState
 import com.nscheatmanager.app.ui.settings.SettingsMessage
 import com.nscheatmanager.app.ui.settings.SettingsScreen
 import com.nscheatmanager.app.ui.settings.SettingsUiState
+import com.nscheatmanager.app.ui.memory.MemoryActions
+import com.nscheatmanager.app.ui.memory.MemoryScreen
+import com.nscheatmanager.app.ui.memory.MemoryUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -112,6 +115,8 @@ fun NSCheatManagerApp(
     editorActions: CheatEditorActions = CheatEditorActions.None,
     editorEffects: Flow<EditorEffect> = emptyFlow(),
     editorEffectActions: EditorEffectActions = EditorEffectActions.None,
+    memoryState: MemoryUiState = MemoryUiState(),
+    memoryActions: MemoryActions = MemoryActions.None,
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
@@ -218,7 +223,7 @@ fun NSCheatManagerApp(
                     editorActions,
                 )
             }
-            composable("memory") { Placeholder(R.string.memory_placeholder, "memory-screen") }
+            composable("memory") { MemoryScreen(memoryState, memoryActions, Modifier.testTag("memory-screen")) }
             composable("settings") {
                 SettingsScreen(
                     state = settingsState,

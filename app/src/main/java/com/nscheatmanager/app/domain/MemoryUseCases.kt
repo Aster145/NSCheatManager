@@ -117,6 +117,10 @@ class MemoryUseCases(
         value: String,
     ): LockedValue {
         val bytes = LittleEndianCodec.encode(type, value)
+        return prepareLock(identity, target, type, bytes)
+    }
+
+    fun prepareLock(identity: GameIdentity, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue {
         validateWrite(bytes)
         val absolute = resolveAbsolute(target, identity, bytes.size)
         return LockedValue(
@@ -125,6 +129,11 @@ class MemoryUseCases(
             type = type,
             bytes = ImmutableBytes.copyOf(bytes),
         )
+    }
+
+    fun prepareWrite(identity: GameIdentity, target: MemoryTarget, type: ValueType, bytes: ByteArray): MemoryWriteResult {
+        validateWrite(bytes)
+        return MemoryWriteResult(target, resolveAbsolute(target, identity, bytes.size), type, ImmutableBytes.copyOf(bytes))
     }
 
     suspend fun freezePrepared(client: SysBotbase, lock: LockedValue) {

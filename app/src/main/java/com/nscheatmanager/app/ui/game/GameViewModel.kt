@@ -11,10 +11,16 @@ import com.nscheatmanager.app.cheats.vm.ExecutionReport
 import com.nscheatmanager.app.cheats.vm.ExecutionStatus
 import com.nscheatmanager.app.cheats.vm.ValidationResult
 import com.nscheatmanager.app.data.files.ZipInspection
+import com.nscheatmanager.app.core.model.MemoryTarget
+import com.nscheatmanager.app.core.model.ValueType
 import com.nscheatmanager.app.domain.ConnectionState
 import com.nscheatmanager.app.domain.DeviceProfile
 import com.nscheatmanager.app.domain.DeviceSessionState
 import com.nscheatmanager.app.domain.GameOperationKey
+import com.nscheatmanager.app.domain.LockedValue
+import com.nscheatmanager.app.domain.MemoryReadResult
+import com.nscheatmanager.app.ui.memory.MemorySessionGateway
+import com.nscheatmanager.app.ui.memory.MemorySessionSnapshot
 import com.nscheatmanager.app.domain.DirectOverwriteConfirmation
 import com.nscheatmanager.app.domain.DownloadOverwriteConfirmation
 import com.nscheatmanager.app.domain.TransferReport
@@ -31,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -166,6 +173,10 @@ interface GameSessionGateway {
     fun requireCurrentOperationKey(expected: GameOperationKey)
     suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport
     suspend fun uncheckGroup(expected: GameOperationKey, groupName: String)
+    suspend fun readMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?): MemoryReadResult = error("Memory unavailable")
+    suspend fun writeMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): Unit = error("Memory unavailable")
+    suspend fun lockMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue = error("Memory unavailable")
+    suspend fun unlockMemory(expected: GameOperationKey, address: ULong): Unit = error("Memory unavailable")
     suspend fun close()
 }
 
@@ -174,12 +185,13 @@ class GameViewModel private constructor(
     private val files: GameFileGateway,
     private val validator: CheatValidator,
     sessionFactory: (CoroutineScope) -> GameSessionGateway,
-) : ViewModel() {
+) : ViewModel(), MemorySessionGateway {
     private val session = sessionFactory(viewModelScope)
     private val mutableUiState = MutableStateFlow(GameUiState())
     val uiState = mutableUiState.asStateFlow()
     private val effectChannel = Channel<GameEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
+    override val changes: Flow<Unit> = session.state.map { }
     private data class GroupClaim(val key: GameOperationKey, val groupName: String)
     private val claimedExecutions = linkedSetOf<GroupClaim>()
     private val locallyCompleted = linkedSetOf<GroupClaim>()
@@ -440,6 +452,13 @@ class GameViewModel private constructor(
     fun currentIdentityForEditor(): GameIdentity? = readyIdentity()
     fun currentOperationKeyForEditor(): GameOperationKey? = session.currentOperationKey()
     fun requireCurrentOperationKey(expected: GameOperationKey) = session.requireCurrentOperationKey(expected)
+    override fun currentSnapshot(): MemorySessionSnapshot = session.state.value.let {
+        MemorySessionSnapshot(it.operationKey, it.game, it.activeLocks, it.pendingLockCleanup)
+    }
+    override suspend fun read(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?) = session.readMemory(expected, target, type, count)
+    override suspend fun write(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) = session.writeMemory(expected, target, type, bytes)
+    override suspend fun lock(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) = session.lockMemory(expected, target, type, bytes)
+    override suspend fun unlock(expected: GameOperationKey, address: ULong) = session.unlockMemory(expected, address)
 
     fun onEditorUnavailable() {
         effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))

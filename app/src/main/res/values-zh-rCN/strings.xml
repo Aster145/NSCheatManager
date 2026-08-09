@@ -114,4 +114,11 @@
     <string name="diagnostic_malformed_response">第 %1$d 行 · 设备响应格式错误</string>
     <string name="diagnostic_response_too_large">第 %1$d 行 · 响应超过 %2$s 字节</string>
     <string name="diagnostic_command_too_large">第 %1$d 行 · 命令字节数（实际/上限）%2$s</string>
+    <string name="memory_title">内存工具</string><string name="memory_subtitle">Switch 固定小端序 · 单次最多读取 4 KiB</string>
+    <string name="memory_absolute">绝对地址</string><string name="memory_address">地址 / 偏移（十六进制）</string><string name="memory_length">读取长度（字节）</string><string name="memory_value">数值</string>
+    <string name="memory_read">读取</string><string name="memory_write">写入</string><string name="memory_lock">锁定</string><string name="memory_copy">复制结果</string>
+    <string name="memory_confirm_title">确认写入内存</string><string name="memory_confirm_detail">目标：%1$s\n字节数：%2$d\n数据：%3$s</string>
+    <string name="memory_pending_cleanup">待清理锁定：%1$d</string><string name="memory_error_session">请先连接并识别当前游戏。</string>
+    <string name="memory_error_address">请输入有效的无符号十六进制地址。</string><string name="memory_error_length">读取长度必须为 1–4096 字节。</string>
+    <string name="memory_error_value">数值与所选类型不匹配。</string><string name="memory_error_operation">内存操作失败。</string><string name="memory_error_changed">设备或游戏已切换，结果已丢弃。</string>
 </resources>
