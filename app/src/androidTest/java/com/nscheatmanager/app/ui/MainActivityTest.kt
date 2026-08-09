@@ -32,7 +32,9 @@ class MainActivityTest {
         val dependencies = (compose.activity.application as NSCheatManagerApplication).dependencies
         createdDeviceIds.forEach { dependencies.deviceRepository.deleteDevice(it) }
         dependencies.appPreferences.setLanguageTag("zh-CN")
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"))
+        compose.runOnUiThread {
+            AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"))
+        }
         MainActivity.dependenciesForTest = null
     }
 

@@ -15,7 +15,7 @@
 - All memory value encoding is little-endian and unsigned 64-bit address arithmetic must reject overflow.
 - Cheat groups execute once only; manual memory locking is the only feature using `freeze`/`unFreeze`.
 - Default ports are sys-botbase `6000`, anonymous passive FTP `21`, and compatible Noexs `7331`.
-- Remote and local paths are exactly `atmosphere/contents/<TID>/cheats/<BID>.txt` and `atmosphere/contents/<TID>/cheats/<BID>/notes.txt`.
+- Remote and local paths are exactly `atmosphere/contents/<TID>/cheats/<BID>.txt` and `atmosphere/contents/<TID>/cheats/notes.txt`.
 - ZIP import rejects every archive with extra, ambiguous, unsafe, encrypted, or over-limit entries before replacing any local file.
 - UI resources exist in Simplified Chinese and English; Chinese is the default when no supported locale is selected.
 - Repository is public, defaults to `main`, uses GPL-3.0, and never commits signing keys or credentials.
@@ -434,13 +434,13 @@ git commit -m "feat: persist devices and game sessions"
 ```kotlin
 @Test fun buildsExactMirrorPaths() {
     assertEquals("atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2.txt", mirror.cheatRelative(tid, bid))
-    assertEquals("atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2/notes.txt", mirror.notesRelative(tid, bid))
+    assertEquals("atmosphere/contents/0100F2C0115B6000/cheats/notes.txt", mirror.notesRelative(tid, bid))
 }
 ```
 
 - [ ] **Step 2: Write failing malicious-archive tests**
 
-Create in-memory ZIPs for `../escape`, absolute paths, backslashes, duplicates after normalization, extra files, mismatched BID notes, encrypted/unsupported entries, 101+ entries, and expanded-size overflow. Assert `ZipImportError` and unchanged mirror bytes.
+Create in-memory ZIPs for `../escape`, absolute paths, backslashes, duplicates after normalization, extra files, mismatched TID notes, legacy `<BID>/notes.txt`, encrypted/unsupported entries, 101+ entries, and expanded-size overflow. Assert `ZipImportError` and unchanged mirror bytes.
 
 - [ ] **Step 3: Run ZIP tests and confirm failure**
 
@@ -449,7 +449,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Implement two-phase inspect then confirmed atomic import**
 
-Allow exactly required `<BID>.txt` plus optional `<BID>/notes.txt`. Parse the cheat before returning an inspection. Extract into `Files.createTempDirectory(cacheDir, "zip-import-")`; after confirmation, replace using temp sibling plus atomic move where supported.
+Allow exactly required `<BID>.txt` plus optional sibling `notes.txt`; reject legacy `<BID>/notes.txt`. Parse the cheat before returning an inspection. Extract into `Files.createTempDirectory(cacheDir, "zip-import-")`; after confirmation, replace using temp sibling plus atomic move where supported.
 
 - [ ] **Step 5: Implement export with preserved paths and SHA-safe deterministic entry ordering**
 
@@ -642,7 +642,7 @@ Place IP selector, connection toggle, and Detach dmnt in one responsive row. Ove
 
 - [ ] **Step 5: Implement editor and share/import launchers**
 
-Tabs edit `<BID>.txt` and `<BID>/notes.txt`. Save through `CheatMirror.atomicReplace`. Export through `FileProvider`; import through `OpenDocument` and two-phase `ZipInspection` confirmation.
+Tabs edit `<BID>.txt` and sibling `notes.txt`. Save through `CheatMirror.atomicReplace`. Export through `FileProvider`; import through `OpenDocument` and two-phase `ZipInspection` confirmation.
 
 - [ ] **Step 6: Run cheat-first UI and unit suites**
 

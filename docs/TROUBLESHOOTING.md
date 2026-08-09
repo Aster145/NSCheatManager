@@ -11,11 +11,11 @@
 
 ### 找不到金手指
 
-路径必须为 `atmosphere/contents/<TID>/cheats/<BID>.txt`，大小写/字符必须与识别结果一致。游戏更新通常会改变 BID，需要对应的新文件。`notes.txt` 应位于 `<BID>/notes.txt`，不是 `<BID>s/notes.txt`。
+路径必须为 `atmosphere/contents/<TID>/cheats/<BID>.txt`，大小写/字符必须与识别结果一致。游戏更新通常会改变 BID，需要对应的新文件。`notes.txt` 应与 `<BID>.txt` 同级，位于 `cheats/notes.txt`；ZIP 不接受旧版 `<BID>/notes.txt` 结构。
 
 ### ZIP 被拒绝
 
-解压查看是否只有匹配的 cheat 和可选 notes。删除 macOS 元数据、顶层包装目录和其他额外文件；不要使用反斜杠、绝对路径、`.` 或 `..`。确认文件未加密、TID 为 16 位十六进制、BID 在两个路径完全相同，并且 cheat 能解析。
+解压查看是否只有匹配的 `<BID>.txt` 和可选的同级 `notes.txt`。删除 macOS 元数据、顶层包装目录和其他额外文件；不要使用旧版 `<BID>/notes.txt`、反斜杠、绝对路径、`.` 或 `..`。确认文件未加密、TID/BID 格式正确，并且 cheat 能解析。
 
 ### FTP 上传要求再次确认
 
@@ -37,6 +37,6 @@
 
 Use a fixed IPv4 on the same trusted LAN and verify ports `6000`, `21`, and `7331` independently. A foreground game is required for recognition. A missing cheat usually means the recognized BID does not match `atmosphere/contents/<TID>/cheats/<BID>.txt`.
 
-ZIPs must contain only the exact matching cheat and optional `<BID>/notes.txt`. FTP direct-overwrite confirmation means rename is unavailable; back up first. Re-recognize before Main/Heap memory operations. Session changes invalidate old confirmations, and pending lock cleanup is reconciled only for the matching device and game.
+ZIPs must contain only the exact matching cheat and optional sibling `notes.txt`; the legacy `<BID>/notes.txt` layout is rejected. FTP direct-overwrite confirmation means rename is unavailable; back up first. Re-recognize before Main/Heap memory operations. Session changes invalidate old confirmations, and pending lock cleanup is reconciled only for the matching device and game.
 
 For builds, use JDK 17, Android SDK 36, and the checked-in Gradle Wrapper.

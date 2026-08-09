@@ -45,12 +45,12 @@ Switch 必须位于可信局域网并使用固定 IPv4：
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+atmosphere/contents/<TID>/cheats/notes.txt
 ```
 
-TID 必须为 16 位十六进制；两个路径中的 BID 必须完全相同。`notes.txt` 是 UTF-8 纯文本，不会作为金手指执行。
+TID 必须为 16 位十六进制；`<BID>.txt` 的 BID 必须与识别结果完全相同。`notes.txt` 是同目录下的 UTF-8 纯文本，不会作为金手指执行。
 
-导入 ZIP 必须只包含必需的 `<BID>.txt`，以及可选的匹配 `<BID>/notes.txt`。额外文件、绝对路径、反斜杠歧义、`.`/`..`、符号链接、重复规范化路径、加密/不支持压缩、过多或过大的条目都会使整个导入失败。完整规则见 [协议说明](docs/PROTOCOLS.md#zip-import-and-export)。
+导入 ZIP 必须只包含必需的 `<BID>.txt`，以及可选的同级 `notes.txt`。旧版 `<BID>/notes.txt` 结构和任何其他额外文件、绝对路径、反斜杠歧义、`.`/`..`、符号链接、重复规范化路径、加密/不支持压缩、过多或过大的条目都会使整个导入失败。完整规则见 [协议说明](docs/PROTOCOLS.md#zip-import-and-export)。
 
 ## 支持的金手指子集
 
@@ -111,7 +111,7 @@ The app-local mirror and FTP preserve exactly:
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+atmosphere/contents/<TID>/cheats/notes.txt
 ```
 
 ZIP import accepts only the required cheat and optional matching notes entry. See [Protocols](docs/PROTOCOLS.md), [Cheat compatibility](docs/CHEAT-COMPATIBILITY.md), and [Troubleshooting](docs/TROUBLESHOOTING.md).

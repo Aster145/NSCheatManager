@@ -56,13 +56,31 @@ class CheatMirror internal constructor(
         "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}.txt"
 
     fun notesRelative(titleId: TitleId, buildId: BuildId): String =
-        "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt"
+        "atmosphere/contents/${titleId.hex}/cheats/notes.txt"
 
     fun cheatPath(titleId: TitleId, buildId: BuildId): Path =
         resolveRelative(cheatRelative(titleId, buildId))
 
-    fun notesPath(titleId: TitleId, buildId: BuildId): Path =
-        resolveRelative(notesRelative(titleId, buildId))
+    fun notesPath(titleId: TitleId, buildId: BuildId): Path {
+        val canonical = resolveRelative(notesRelative(titleId, buildId))
+        if (Files.exists(canonical, LinkOption.NOFOLLOW_LINKS)) return canonical
+
+        // Versions before the title-level Breeze layout stored notes below a Build-ID directory.
+        // Copy only the requested/current Build's legacy file. The canonical file wins, and all
+        // legacy files are retained so switching Builds cannot silently discard user data.
+        val legacy = resolveRelative(
+            "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt",
+        )
+        withWriteTransaction {
+            if (!Files.exists(canonical, LinkOption.NOFOLLOW_LINKS) &&
+                Files.exists(legacy, LinkOption.NOFOLLOW_LINKS)
+            ) {
+                requireRegularOrMissing(legacy)
+                atomicReplace(canonical, Files.readAllBytes(legacy))
+            }
+        }
+        return canonical
+    }
 
     /**
      * Publishes [content] without exposing a partially written destination.

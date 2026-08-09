@@ -146,6 +146,7 @@ enum class GameMessage {
     UPLOAD_COMPLETE,
     IMPORT_COMPLETE,
     DETACH_COMPLETE,
+    LOCAL_CHEAT_MISSING,
 }
 
 data class ShareArchive(val fileName: String, val bytes: ByteArray)
@@ -209,6 +210,8 @@ class GameViewModel private constructor(
     private var displayedIdentity: GameIdentity? = null
     private var localCheatOverride: CheatFile? = null
     private var localOverrideIdentity: GameIdentity? = null
+    private enum class PendingTransfer { Download, Upload }
+    private var pendingTransfer: PendingTransfer? = null
 
     constructor(
         devices: GameDeviceStore,
@@ -264,8 +267,9 @@ class GameViewModel private constructor(
                 ConnectionState.Connecting,
                 ConnectionState.Recognizing,
                 ConnectionState.Ready,
-            )
+        )
         ) {
+            pendingTransfer = null
             session.disconnect()
             return
         }
@@ -411,8 +415,12 @@ class GameViewModel private constructor(
         val profile = selectedProfile()
         val identity = readyIdentity()
         val key = session.currentOperationKey()
-        if (profile == null || identity == null || key == null) {
-            effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
+        if (profile == null) {
+            effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE))
+            return
+        }
+        if (identity == null || key == null) {
+            requestTransferAfterRecognition(PendingTransfer.Download, profile)
             return
         }
         runDownload(key, profile, identity, null)
@@ -433,16 +441,19 @@ class GameViewModel private constructor(
         val profile = selectedProfile()
         val identity = readyIdentity()
         val key = session.currentOperationKey()
-        if (profile == null || identity == null || key == null) {
-            effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
+        if (profile == null) {
+            effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE))
             return
         }
-        viewModelScope.launch {
-            runCatching { files.previewUpload(profile, identity) { session.requireCurrentOperationKey(key) } }
-                .mapCatching { preview -> session.requireCurrentOperationKey(key); preview }
-                .onSuccess { preview -> setConfirmation { id -> GameConfirmation.Upload(id, key, preview) } }
-                .onFailure { showFailure(it, OperationContext.FTP) }
+        if (identity == null || key == null) {
+            requestTransferAfterRecognition(PendingTransfer.Upload, profile)
+            return
         }
+        if (mutableUiState.value.missingMirror) {
+            effectChannel.trySend(GameEffect.Message(GameMessage.LOCAL_CHEAT_MISSING))
+            return
+        }
+        previewUpload(key, profile, identity)
     }
 
     fun onShareZipRequested() {
@@ -450,6 +461,10 @@ class GameViewModel private constructor(
         val key = session.currentOperationKey()
         if (identity == null || key == null) {
             effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
+            return
+        }
+        if (mutableUiState.value.missingMirror) {
+            effectChannel.trySend(GameEffect.Message(GameMessage.LOCAL_CHEAT_MISSING))
             return
         }
         viewModelScope.launch {
@@ -475,7 +490,15 @@ class GameViewModel private constructor(
     override suspend fun unlock(expected: GameOperationKey, address: ULong) = session.unlockMemory(expected, address)
 
     fun onEditorUnavailable() {
-        effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
+        effectChannel.trySend(
+            GameEffect.Message(
+                if (mutableUiState.value.gameValidated && mutableUiState.value.missingMirror) {
+                    GameMessage.LOCAL_CHEAT_MISSING
+                } else {
+                    GameMessage.SESSION_NOT_READY
+                },
+            ),
+        )
     }
 
     fun onExternalFailure(error: Throwable) {
@@ -646,6 +669,47 @@ class GameViewModel private constructor(
                 busy = next.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing),
                 groups = groupRows(displayedCheatFile, identity, next),
             )
+        }
+        resumePendingTransfer(next)
+    }
+
+    private fun requestTransferAfterRecognition(transfer: PendingTransfer, profile: DeviceProfile) {
+        pendingTransfer = transfer
+        when (sessionState.connection) {
+            ConnectionState.Connecting, ConnectionState.Recognizing -> Unit
+            ConnectionState.Ready -> session.recognizeAgain()
+            ConnectionState.Disconnected, ConnectionState.Error -> session.connectAndRecognize(profile)
+        }
+    }
+
+    private fun resumePendingTransfer(next: DeviceSessionState) {
+        val transfer = pendingTransfer ?: return
+        if (next.connection == ConnectionState.Error) {
+            pendingTransfer = null
+            return
+        }
+        val profile = selectedProfile() ?: return
+        val identity = next.game?.takeIf { next.connection == ConnectionState.Ready && next.gameValidated } ?: return
+        val key = next.operationKey ?: return
+        pendingTransfer = null
+        when (transfer) {
+            PendingTransfer.Download -> runDownload(key, profile, identity, null)
+            PendingTransfer.Upload -> {
+                if (next.cheatFile == null) {
+                    effectChannel.trySend(GameEffect.Message(GameMessage.LOCAL_CHEAT_MISSING))
+                } else {
+                    previewUpload(key, profile, identity)
+                }
+            }
+        }
+    }
+
+    private fun previewUpload(key: GameOperationKey, profile: DeviceProfile, identity: GameIdentity) {
+        viewModelScope.launch {
+            runCatching { files.previewUpload(profile, identity) { session.requireCurrentOperationKey(key) } }
+                .mapCatching { preview -> session.requireCurrentOperationKey(key); preview }
+                .onSuccess { preview -> setConfirmation { id -> GameConfirmation.Upload(id, key, preview) } }
+                .onFailure { showFailure(it, OperationContext.FTP) }
         }
     }
 

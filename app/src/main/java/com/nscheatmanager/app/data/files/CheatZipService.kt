@@ -294,14 +294,14 @@ class CheatZipService internal constructor(
 
             val cheat = cheatEntries.single()
             val notes = notesEntries.singleOrNull()
-            if (notes != null && (notes.titleId != cheat.titleId || notes.buildId != cheat.buildId)) {
-                throw ZipImportError("notes.txt must use the cheat file's Title ID and Build ID")
+            if (notes != null && notes.titleId != cheat.titleId) {
+                throw ZipImportError("notes.txt must use the cheat file's Title ID")
             }
             decodeUtf8(cheat.bytes, "cheat file")
             notes?.let { decodeUtf8(it.bytes, "notes.txt") }
             return ValidatedArchive(
                 titleId = cheat.titleId,
-                buildId = cheat.buildId,
+                buildId = requireNotNull(cheat.buildId),
                 cheat = cheat,
                 notes = notes,
             )
@@ -601,12 +601,11 @@ class CheatZipService internal constructor(
         }
         NotesPath.matchEntire(rawName)?.let { match ->
             val titleId = TitleId.parse(match.groupValues[1])
-            val buildId = BuildId.parse(match.groupValues[2])
             return PathCandidate(
                 EntryKind.NOTES,
                 titleId,
-                buildId,
-                mirror.notesRelative(titleId, buildId),
+                null,
+                "atmosphere/contents/${titleId.hex}/cheats/notes.txt",
             )
         }
         throw ZipImportError("ZIP contains an entry outside the canonical Atmosphere layout")
@@ -1094,14 +1093,14 @@ class CheatZipService internal constructor(
     private data class PathCandidate(
         val kind: EntryKind,
         val titleId: TitleId,
-        val buildId: BuildId,
+        val buildId: BuildId?,
         val canonicalPath: String,
     )
 
     private data class ExtractedEntry(
         val kind: EntryKind,
         val titleId: TitleId,
-        val buildId: BuildId,
+        val buildId: BuildId?,
         val canonicalPath: String,
         val bytes: ByteArray,
     )
@@ -1160,7 +1159,7 @@ class CheatZipService internal constructor(
             "atmosphere/contents/([0-9A-Fa-f]{16})/cheats/([0-9A-Fa-f]{16})\\.txt",
         )
         val NotesPath = Regex(
-            "atmosphere/contents/([0-9A-Fa-f]{16})/cheats/([0-9A-Fa-f]{16})/notes\\.txt",
+            "atmosphere/contents/([0-9A-Fa-f]{16})/cheats/notes\\.txt",
         )
     }
 }

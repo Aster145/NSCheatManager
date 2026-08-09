@@ -27,6 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -65,6 +66,7 @@ data class SettingsUiState(
     val languageTag: String = AppPreferences.CHINESE_LANGUAGE_TAG,
     val editor: DeviceEditorUiState? = null,
     val isSaving: Boolean = false,
+    val showMemoryPage: Boolean = false,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -80,6 +82,7 @@ fun SettingsScreen(
     onEditorChanged: (DeviceEditorUiState) -> Unit,
     onSaveEditor: () -> Unit,
     onDismissEditor: () -> Unit,
+    onShowMemoryPageChanged: (Boolean) -> Unit = {},
     messages: Flow<SettingsMessage> = emptyFlow(),
     modifier: Modifier = Modifier,
 ) {
@@ -87,12 +90,14 @@ fun SettingsScreen(
     val deleteFailed = stringResource(R.string.error_delete_device)
     val defaultFailed = stringResource(R.string.error_default_device)
     val languageFailed = stringResource(R.string.error_language_change)
+    val memoryVisibilityFailed = stringResource(R.string.error_memory_visibility_change)
     LaunchedEffect(messages) {
         messages.collect { message ->
             snackbar.showSnackbar(when (message) {
                 SettingsMessage.DELETE_FAILED -> deleteFailed
                 SettingsMessage.DEFAULT_FAILED -> defaultFailed
                 SettingsMessage.LANGUAGE_FAILED -> languageFailed
+                SettingsMessage.MEMORY_VISIBILITY_FAILED -> memoryVisibilityFailed
             })
         }
     }
@@ -167,6 +172,22 @@ fun SettingsScreen(
                                 onClick = { onLanguageSelected(AppPreferences.ENGLISH_LANGUAGE_TAG) },
                                 label = { Text("English") },
                             )
+                        }
+                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("show-memory-setting"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.show_memory_page), style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    stringResource(R.string.show_memory_page_summary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = state.showMemoryPage, onCheckedChange = onShowMemoryPageChanged)
                         }
                     }
                 }

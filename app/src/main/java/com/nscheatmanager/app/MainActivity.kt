@@ -79,6 +79,7 @@ class MainActivity : AppCompatActivity() {
                         delete = settingsViewModel::deleteDevice,
                         setDefault = settingsViewModel::setDefaultDevice,
                         selectLanguage = settingsViewModel::selectLanguage,
+                        showMemoryPage = settingsViewModel::setShowMemoryPage,
                         editorChanged = settingsViewModel::updateEditor,
                         saveEditor = settingsViewModel::saveEditor,
                         dismissEditor = settingsViewModel::dismissEditor,
@@ -95,7 +96,7 @@ class MainActivity : AppCompatActivity() {
                             if (enabled) {
                                 val identity = gameViewModel.currentIdentityForEditor()
                                 val key = gameViewModel.currentOperationKeyForEditor()
-                                if (identity != null && key != null) editorViewModel.open(identity, key)
+                                if (identity != null && key != null && !gameState.missingMirror) editorViewModel.open(identity, key)
                                 else gameViewModel.onEditorUnavailable()
                             } else {
                                 editorViewModel.requestClose()

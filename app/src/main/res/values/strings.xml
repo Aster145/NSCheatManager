@@ -149,4 +149,9 @@
     <string name="memory_error_address">Enter a valid unsigned hexadecimal address.</string><string name="memory_error_length">Read length must be 1–4096 bytes.</string>
     <string name="memory_error_value">The value is invalid for this type.</string><string name="memory_error_operation">Memory operation failed.</string><string name="memory_error_changed">Device or game changed; result was discarded.</string>
     <string name="memory_target_absolute">Absolute 0x%1$s</string><string name="memory_target_main">Main + 0x%1$s</string><string name="memory_target_heap">Heap + 0x%1$s</string>
+    <string name="show_memory_page">Show memory page</string>
+    <string name="show_memory_page_summary">Show the advanced memory tool in bottom navigation.</string>
+    <string name="error_memory_visibility_change">Could not save the memory page setting.</string>
+    <string name="recognize_game_first">Recognize the current game on the Game page first.</string>
+    <string name="go_to_game_page">Go to Game</string>
 </resources>

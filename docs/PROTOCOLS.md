@@ -18,7 +18,7 @@
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+atmosphere/contents/<TID>/cheats/notes.txt
 ```
 
 只同步当前识别的 TID/BID。下载先暂存并解析 cheat，确认后才替换本地文件；上传不会执行金手指，也不保证 Atmosphère 自动重载。
@@ -29,12 +29,12 @@ atmosphere/contents/<TID>/cheats/<BID>/notes.txt
 
 ```text
 atmosphere/contents/<TID>/cheats/<BID>.txt
-atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+atmosphere/contents/<TID>/cheats/notes.txt
 ```
 
 缺少 cheat 会阻止导出；缺少 notes 时，只有用户确认后才加入空 `notes.txt`。
 
-导入只允许一个游戏/Build：必需 cheat，加上可选的匹配 notes。TID 必须是 16 位十六进制，BID 必须是有效十六进制且两条路径一致。ZIP 不允许任何额外条目，也拒绝绝对路径、反斜杠/规范化歧义、`.`、`..`、符号链接、重复路径、加密条目、不支持的压缩、条目过多、单项或展开总量超限。完整校验和 cheat 解析成功后才显示预览并原子替换本地镜像。导入不会上传、执行或切换设备。
+导入只允许一个游戏/Build：必需 `<BID>.txt`，加上可选的同级 `notes.txt`。TID 必须是 16 位十六进制，BID 必须是有效十六进制；旧版 `<BID>/notes.txt` 结构会被拒绝。ZIP 不允许任何额外条目，也拒绝绝对路径、反斜杠/规范化歧义、`.`、`..`、符号链接、重复路径、加密条目、不支持的压缩、条目过多、单项或展开总量超限。完整校验和 cheat 解析成功后才显示预览并原子替换本地镜像。导入不会上传、执行或切换设备。
 
 ## English
 
@@ -44,7 +44,7 @@ Only the current recognized game is synchronized, using:
 
 ```text
 /atmosphere/contents/<TID>/cheats/<BID>.txt
-/atmosphere/contents/<TID>/cheats/<BID>/notes.txt
+/atmosphere/contents/<TID>/cheats/notes.txt
 ```
 
 ZIP export preserves the same relative paths. Import accepts exactly one required cheat and one optional matching notes file, rejects every extra or unsafe entry, fully validates before preview, and atomically replaces the app-local mirror only after confirmation. Import never uploads, executes cheats, or changes devices.

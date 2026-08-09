@@ -21,7 +21,7 @@ enum class DeviceEditorError {
     SAVE_FAILED,
 }
 
-enum class SettingsMessage { DELETE_FAILED, DEFAULT_FAILED, LANGUAGE_FAILED }
+enum class SettingsMessage { DELETE_FAILED, DEFAULT_FAILED, LANGUAGE_FAILED, MEMORY_VISIBILITY_FAILED }
 
 interface DeviceSettingsRepository {
     val devices: Flow<List<DeviceProfile>>
@@ -41,7 +41,9 @@ interface DeviceSettingsRepository {
 
 interface LanguagePreferenceStore {
     val languageTag: Flow<String>
+    val showMemoryPage: Flow<Boolean>
     suspend fun setLanguageTag(languageTag: String)
+    suspend fun setShowMemoryPage(show: Boolean)
 }
 
 class SettingsViewModel(
@@ -63,6 +65,11 @@ class SettingsViewModel(
         viewModelScope.launch {
             preferences.languageTag.collect { languageTag ->
                 mutableUiState.update { it.copy(languageTag = languageTag) }
+            }
+        }
+        viewModelScope.launch {
+            preferences.showMemoryPage.collect { show ->
+                mutableUiState.update { it.copy(showMemoryPage = show) }
             }
         }
     }
@@ -174,6 +181,19 @@ class SettingsViewModel(
         }
     }
 
+    fun setShowMemoryPage(show: Boolean) {
+        val previous = mutableUiState.value.showMemoryPage
+        if (previous == show) return
+        mutableUiState.update { it.copy(showMemoryPage = show) }
+        viewModelScope.launch {
+            runCatching { preferences.setShowMemoryPage(show) }
+                .onFailure {
+                    mutableUiState.update { state -> state.copy(showMemoryPage = previous) }
+                    mutableMessages.emit(SettingsMessage.MEMORY_VISIBILITY_FAILED)
+                }
+        }
+    }
+
     class Factory(
         private val devices: DeviceSettingsRepository,
         private val preferences: LanguagePreferenceStore,
@@ -207,7 +227,9 @@ class DeviceRepositoryAdapter(private val delegate: DeviceRepository) : DeviceSe
 
 class AppPreferencesAdapter(private val delegate: AppPreferences) : LanguagePreferenceStore {
     override val languageTag: Flow<String> = delegate.languageTag
+    override val showMemoryPage: Flow<Boolean> = delegate.showMemoryPage
     override suspend fun setLanguageTag(languageTag: String) = delegate.setLanguageTag(languageTag)
+    override suspend fun setShowMemoryPage(show: Boolean) = delegate.setShowMemoryPage(show)
 }
 
 private sealed interface EditorValidation {

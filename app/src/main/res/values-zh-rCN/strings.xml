@@ -149,4 +149,9 @@
     <string name="memory_error_address">请输入有效的无符号十六进制地址。</string><string name="memory_error_length">读取长度必须为 1–4096 字节。</string>
     <string name="memory_error_value">数值与所选类型不匹配。</string><string name="memory_error_operation">内存操作失败。</string><string name="memory_error_changed">设备或游戏已切换，结果已丢弃。</string>
     <string name="memory_target_absolute">绝对地址 0x%1$s</string><string name="memory_target_main">Main + 0x%1$s</string><string name="memory_target_heap">Heap + 0x%1$s</string>
+    <string name="show_memory_page">&#26174;&#31034;&#20869;&#23384;&#39029;&#38754;</string>
+    <string name="show_memory_page_summary">&#22312;&#24213;&#37096;&#23548;&#33322;&#20013;&#26174;&#31034;&#39640;&#32423;&#20869;&#23384;&#24037;&#20855;&#12290;</string>
+    <string name="error_memory_visibility_change">&#26080;&#27861;&#20445;&#23384;&#20869;&#23384;&#39029;&#38754;&#35774;&#32622;&#12290;</string>
+    <string name="recognize_game_first">&#35831;&#20808;&#22312;&#28216;&#25103;&#39029;&#35782;&#21035;&#24403;&#21069;&#28216;&#25103;&#12290;</string>
+    <string name="go_to_game_page">&#21069;&#24448;&#28216;&#25103;&#39029;</string>
 </resources>

@@ -34,7 +34,7 @@ class CheatZipServiceTest {
     private val cheatPath =
         "atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2.txt"
     private val notesPath =
-        "atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2/notes.txt"
+        "atmosphere/contents/0100F2C0115B6000/cheats/notes.txt"
     private val validCheat = (
         "[Money]\n" +
             "04000000 00112233 00000063\n" +
@@ -90,7 +90,7 @@ class CheatZipServiceTest {
         val lowercaseCheat = cheatPath.lowercase()
         val lowercaseNotes = notesPath.lowercase()
         val mismatchNotes =
-            "atmosphere/contents/${titleId.hex}/cheats/${otherBuildId.hex}/notes.txt"
+            "atmosphere/contents/0100000000000000/cheats/notes.txt"
         val unsafeArchives = linkedMapOf(
             "parent traversal" to zipOf("../escape.txt" to validCheat),
             "embedded parent traversal" to zipOf(
@@ -119,7 +119,11 @@ class CheatZipServiceTest {
                 cheatPath to validCheat,
                 "atmosphere/contents/${titleId.hex}/cheats/" to byteArrayOf(),
             ),
-            "mismatched Build ID notes" to zipOf(cheatPath to validCheat, mismatchNotes to notes),
+            "mismatched Title ID notes" to zipOf(cheatPath to validCheat, mismatchNotes to notes),
+            "legacy Build ID notes layout" to zipOf(
+                cheatPath to validCheat,
+                "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt" to notes,
+            ),
             "missing cheat" to zipOf(notesPath to notes),
         )
 

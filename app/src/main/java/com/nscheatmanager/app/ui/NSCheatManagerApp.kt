@@ -49,6 +49,7 @@ import com.nscheatmanager.app.ui.game.CheatDiagnosticUiState
 import com.nscheatmanager.app.ui.game.GameMessage
 import com.nscheatmanager.app.ui.game.GameScreen
 import com.nscheatmanager.app.ui.game.GameScreenActions
+import com.nscheatmanager.app.ui.game.GameScreenContent
 import com.nscheatmanager.app.ui.game.GameUiState
 import com.nscheatmanager.app.ui.share.ZipDocumentReader
 import com.nscheatmanager.app.ui.share.ZipShareService
@@ -71,12 +72,13 @@ data class SettingsActions(
     val delete: (String) -> Unit,
     val setDefault: (String) -> Unit,
     val selectLanguage: (String) -> Unit,
+    val showMemoryPage: (Boolean) -> Unit,
     val editorChanged: (DeviceEditorUiState) -> Unit,
     val saveEditor: () -> Unit,
     val dismissEditor: () -> Unit,
 ) {
     companion object {
-        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {})
+        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -136,6 +138,7 @@ fun NSCheatManagerApp(
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: "cheats"
+    val visibleDestinations = mainDestinations.filter { it.route != "memory" || settingsState.showMemoryPage }
     val mainRoute = mainDestinations.any { it.route == route }
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -207,11 +210,19 @@ fun NSCheatManagerApp(
         }
     }
 
+    LaunchedEffect(settingsState.showMemoryPage, route) {
+        if (!settingsState.showMemoryPage && route == "memory") {
+            val pendingWrite = memoryState.confirmation
+            if (pendingWrite != null) memoryActions.dismiss.invoke(pendingWrite.id)
+            navigateMain("cheats")
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar, Modifier.testTag("app-snackbar")) },
         bottomBar = {
             if (mainRoute && !editorState.isOpen) NavigationBar {
-                mainDestinations.forEach { destination ->
+                visibleDestinations.forEach { destination ->
                     NavigationBarItem(
                         modifier = Modifier.testTag(destination.tag),
                         selected = route == destination.route,
@@ -234,6 +245,7 @@ fun NSCheatManagerApp(
                     Modifier.testTag("game-screen"),
                     editorState,
                     editorActions,
+                    GameScreenContent.GameInfo,
                 )
             }
             composable("cheats") {
@@ -246,6 +258,8 @@ fun NSCheatManagerApp(
                     Modifier.testTag("cheats-screen"),
                     editorState,
                     editorActions,
+                    GameScreenContent.Cheats,
+                    onOpenGame = { requestNavigation("game") },
                 )
             }
             composable("memory") { MemoryScreen(memoryState, memoryActions, Modifier.testTag("memory-screen")) }
@@ -258,6 +272,7 @@ fun NSCheatManagerApp(
                     onDeleteDevice = settingsActions.delete,
                     onSetDefault = settingsActions.setDefault,
                     onLanguageSelected = settingsActions.selectLanguage,
+                    onShowMemoryPageChanged = settingsActions.showMemoryPage,
                     onEditorChanged = settingsActions.editorChanged,
                     onSaveEditor = settingsActions.saveEditor,
                     onDismissEditor = settingsActions.dismissEditor,
@@ -348,6 +363,7 @@ internal fun Resources.localizedGameMessage(effect: GameEffect.Message): String 
             GameMessage.UPLOAD_COMPLETE -> R.string.upload_complete
             GameMessage.IMPORT_COMPLETE -> R.string.import_complete
             GameMessage.DETACH_COMPLETE -> R.string.detach_complete
+            GameMessage.LOCAL_CHEAT_MISSING -> R.string.cheat_file_missing
         },
     )
     return listOfNotNull(

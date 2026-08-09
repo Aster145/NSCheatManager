@@ -69,7 +69,7 @@ class CheatFirstFlowTest {
         compose.onNodeWithTag("detach-dmnt").assertIsDisplayed()
         compose.onNodeWithTag("overflow-menu").performClick()
         listOf(
-            "menu-edit", "menu-recognize", "menu-download", "menu-upload",
+            "menu-edit", "menu-download", "menu-upload",
             "menu-share-zip", "menu-import-zip", "menu-settings", "menu-about",
         ).forEachIndexed { index, tag ->
             compose.onNodeWithTag("menu-order-$index").assertIsDisplayed()

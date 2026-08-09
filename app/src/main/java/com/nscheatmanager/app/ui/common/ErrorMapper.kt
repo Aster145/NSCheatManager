@@ -89,6 +89,7 @@ object ErrorMapper {
             SettingsMessage.DELETE_FAILED -> R.string.error_delete_device
             SettingsMessage.DEFAULT_FAILED -> R.string.error_default_device
             SettingsMessage.LANGUAGE_FAILED -> R.string.error_language_change
+            SettingsMessage.MEMORY_VISIBILITY_FAILED -> R.string.error_memory_visibility_change
         }, DiagnosticDetail(ErrorCategory.SETTINGS),
     )
 

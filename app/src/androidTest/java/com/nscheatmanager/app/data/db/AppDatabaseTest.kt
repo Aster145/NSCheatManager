@@ -171,6 +171,15 @@ class AppDatabaseTest {
     }
 
     @Test
+    fun memoryPageIsHiddenByDefaultAndPreferencePersists() = runBlocking {
+        assertFalse(preferences.showMemoryPage.first())
+        preferences.setShowMemoryPage(true)
+        assertTrue(preferences.showMemoryPage.first())
+        preferences.setShowMemoryPage(false)
+        assertFalse(preferences.showMemoryPage.first())
+    }
+
+    @Test
     fun validatedSessionIsTrustedOnlyByTheRepositoryThatRecognizedIt() = runBlocking {
         val databaseName = "restart-${UUID.randomUUID()}.db"
         var firstDatabase: AppDatabase? = null

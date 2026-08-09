@@ -149,6 +149,39 @@ class GameViewModelTest {
     }
 
     @Test
+    fun completedDownloadRefreshesCheatGroupsWithoutDisconnecting() = runTest(dispatcher) {
+        val files = FakeGameFileGateway(editableCheatText = "[Downloaded group]\n04000000 00000020 00000001")
+        val session = FakeSessionGateway()
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, files)
+        session.state.value = readyState(CheatFile(emptyList(), emptyList()))
+        advanceUntilIdle()
+
+        viewModel.onDownloadRequested()
+        advanceUntilIdle()
+
+        assertEquals(ConnectionState.Ready, viewModel.uiState.value.connection)
+        assertEquals(listOf("Downloaded group"), viewModel.uiState.value.groups.map(CheatGroupUiState::name))
+    }
+
+    @Test
+    fun downloadRequestedWhileDisconnectedConnectsAndContinuesAfterRecognition() = runTest(dispatcher) {
+        val files = FakeGameFileGateway(editableCheatText = "[Downloaded group]\n04000000 00000020 00000001")
+        val session = FakeSessionGateway()
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, files)
+        advanceUntilIdle()
+
+        viewModel.onDownloadRequested()
+        assertEquals(listOf(DEVICE), session.connects)
+        assertEquals(0, files.downloadCalls)
+
+        session.state.value = readyState(CheatFile(emptyList(), emptyList()))
+        advanceUntilIdle()
+
+        assertEquals(1, files.downloadCalls)
+        assertEquals(listOf("Downloaded group"), viewModel.uiState.value.groups.map(CheatGroupUiState::name))
+    }
+
+    @Test
     fun uncheckOnlyClearsPersistenceAndNeverExecutesMemory() = runTest(dispatcher) {
         val session = FakeSessionGateway()
         val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
@@ -431,6 +464,7 @@ class GameViewModelTest {
             ),
         ),
         private val uploadReports: ArrayDeque<TransferReport> = ArrayDeque(listOf(TransferReport.StaleLocalSnapshot)),
+        private val editableCheatText: String = "",
     ) : GameFileGateway {
         var imports = 0
         var downloadPublishes = 0
@@ -447,7 +481,7 @@ class GameViewModelTest {
             "test-token",
         )
 
-        override suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit) = EditableGameFiles("", "", false).also {
+        override suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit) = EditableGameFiles(editableCheatText, "", false).also {
             checkpoint()
             loaded += identity
         }

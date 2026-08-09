@@ -85,6 +85,12 @@ data class GameScreenActions(
     }
 }
 
+enum class GameScreenContent {
+    GameInfo,
+    Cheats,
+    Combined,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameScreen(
@@ -93,41 +99,15 @@ fun GameScreen(
     modifier: Modifier = Modifier,
     editorState: CheatEditorUiState = CheatEditorUiState(),
     editorActions: CheatEditorActions = CheatEditorActions.None,
+    content: GameScreenContent = GameScreenContent.Combined,
+    onOpenGame: () -> Unit = {},
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(Color(0xFF5E478D)),
-                        ) {
-                            Image(
-                                painter = painterResource(R.mipmap.ic_launcher_foreground),
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                stringResource(R.string.app_name),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                stringResource(R.string.current_game),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                },
+                title = {},
                 actions = {
                     val label = stringResource(R.string.more_options)
                     IconButton(
@@ -135,7 +115,7 @@ fun GameScreen(
                         onClick = { menuExpanded = true },
                     ) { Text("⋮") }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        ToggleOrderedMenuItem(0, "menu-edit", state.gameValidated && !state.missingMirror, state.editMode || editorState.isOpen, text = {
+                        ToggleOrderedMenuItem(0, "menu-edit", true, state.editMode || editorState.isOpen, text = {
                             Checkbox(modifier = Modifier.clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.edit_mode))
@@ -143,25 +123,22 @@ fun GameScreen(
                             menuExpanded = false
                             actions.editModeChanged(!(state.editMode || editorState.isOpen))
                         }
-                        OrderedMenuItem(1, "menu-recognize", state.connection == ConnectionState.Ready, { Text(stringResource(R.string.recognize_game)) }) {
-                            menuExpanded = false; actions.recognize()
-                        }
-                        OrderedMenuItem(2, "menu-download", state.gameValidated, { Text(stringResource(R.string.download_from_switch)) }) {
+                        OrderedMenuItem(1, "menu-download", true, { Text(stringResource(R.string.download_from_switch)) }) {
                             menuExpanded = false; actions.download()
                         }
-                        OrderedMenuItem(3, "menu-upload", state.gameValidated && !state.missingMirror, { Text(stringResource(R.string.upload_to_switch)) }) {
+                        OrderedMenuItem(2, "menu-upload", true, { Text(stringResource(R.string.upload_to_switch)) }) {
                             menuExpanded = false; actions.upload()
                         }
-                        OrderedMenuItem(4, "menu-share-zip", state.gameValidated && !state.missingMirror, { Text(stringResource(R.string.package_share_zip)) }) {
+                        OrderedMenuItem(3, "menu-share-zip", true, { Text(stringResource(R.string.package_share_zip)) }) {
                             menuExpanded = false; actions.shareZip()
                         }
-                        OrderedMenuItem(5, "menu-import-zip", state.gameValidated, { Text(stringResource(R.string.import_zip)) }) {
+                        OrderedMenuItem(4, "menu-import-zip", true, { Text(stringResource(R.string.import_zip)) }) {
                             menuExpanded = false; actions.importZip()
                         }
-                        OrderedMenuItem(6, "menu-settings", true, { Text(stringResource(R.string.settings_title)) }) {
+                        OrderedMenuItem(5, "menu-settings", true, { Text(stringResource(R.string.settings_title)) }) {
                             menuExpanded = false; actions.settings()
                         }
-                        OrderedMenuItem(7, "menu-about", true, { Text(stringResource(R.string.about_title)) }) {
+                        OrderedMenuItem(6, "menu-about", true, { Text(stringResource(R.string.about_title)) }) {
                             menuExpanded = false; actions.about()
                         }
                     }
@@ -173,13 +150,36 @@ fun GameScreen(
             Modifier.padding(padding).padding(horizontal = 12.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            DeviceControls(state, actions)
-            if (editorState.isOpen) {
-                CheatEditorScreen(editorState, editorActions)
-            } else {
-                GameIdentityCard(state)
-                GameActionRow(state, actions)
-                CheatGroups(state, actions)
+            when (content) {
+                GameScreenContent.GameInfo -> {
+                    DeviceControls(state, actions)
+                    GameIdentityCard(state)
+                    GameActionRow(state, actions)
+                }
+                GameScreenContent.Cheats -> {
+                    if (editorState.isOpen) {
+                        CheatEditorScreen(editorState, editorActions)
+                    } else if (!state.gameValidated) {
+                        Card(Modifier.fillMaxWidth().testTag("cheats-needs-game")) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(stringResource(R.string.recognize_game_first))
+                                Button(onClick = onOpenGame) { Text(stringResource(R.string.go_to_game_page)) }
+                            }
+                        }
+                    } else {
+                        CheatGroups(state, actions)
+                    }
+                }
+                GameScreenContent.Combined -> {
+                    DeviceControls(state, actions)
+                    if (editorState.isOpen) {
+                        CheatEditorScreen(editorState, editorActions)
+                    } else {
+                        GameIdentityCard(state)
+                        GameActionRow(state, actions)
+                        CheatGroups(state, actions)
+                    }
+                }
             }
             Spacer(Modifier.height(8.dp))
         }

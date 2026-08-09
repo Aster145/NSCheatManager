@@ -58,6 +58,21 @@ class SettingsAndAboutTest {
     val compose = createComposeRule()
 
     @Test
+    fun memoryDestinationIsHiddenByDefaultAndAppearsWhenEnabled() {
+        var showMemory by mutableStateOf(false)
+        compose.setContent {
+            NSCheatManagerApp(
+                settingsState = SettingsUiState(languageTag = "en", showMemoryPage = showMemory),
+                settingsActions = SettingsActions.None,
+                versionName = "1",
+            )
+        }
+        compose.onNodeWithTag("nav-memory").assertDoesNotExist()
+        compose.runOnIdle { showMemory = true }
+        compose.onNodeWithTag("nav-memory").assertIsDisplayed()
+    }
+
+    @Test
     fun settingsShowsMultipleDevicesDefaultAndPortsAt320Dp() {
         val devices = listOf(
             DeviceProfile("living", "Living room Switch with a deliberately very long accessible name", "192.168.1.35", isDefault = true),
@@ -379,6 +394,7 @@ class SettingsAndAboutTest {
 
     private class FakeLanguagePreferences(initial: String) : LanguagePreferenceStore {
         override val languageTag = MutableStateFlow(initial)
+        override val showMemoryPage = MutableStateFlow(false)
         val writes = mutableListOf<String>()
         var failWrites = false
 
@@ -386,6 +402,11 @@ class SettingsAndAboutTest {
             if (failWrites) error("language")
             writes += languageTag
             this.languageTag.value = languageTag
+        }
+
+
+        override suspend fun setShowMemoryPage(show: Boolean) {
+            showMemoryPage.value = show
         }
     }
 }

@@ -3,6 +3,7 @@ package com.nscheatmanager.app.data.preferences
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -25,6 +26,10 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         }
         .distinctUntilChanged()
 
+    val showMemoryPage: Flow<Boolean> = dataStore.data
+        .map { it[SHOW_MEMORY_PAGE] ?: false }
+        .distinctUntilChanged()
+
     suspend fun setSelectedDeviceId(deviceId: String) {
         require(deviceId.isNotBlank()) { "Device ID must not be blank" }
         dataStore.edit { it[SELECTED_DEVICE_ID] = deviceId }
@@ -39,6 +44,10 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[LANGUAGE_TAG] = languageTag }
     }
 
+    suspend fun setShowMemoryPage(show: Boolean) {
+        dataStore.edit { it[SHOW_MEMORY_PAGE] = show }
+    }
+
     companion object {
         const val CHINESE_LANGUAGE_TAG = "zh-CN"
         const val ENGLISH_LANGUAGE_TAG = "en"
@@ -49,5 +58,6 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
 
         private val SELECTED_DEVICE_ID = stringPreferencesKey("selected_device_id")
         private val LANGUAGE_TAG = stringPreferencesKey("language_tag")
+        private val SHOW_MEMORY_PAGE = booleanPreferencesKey("show_memory_page")
     }
 }

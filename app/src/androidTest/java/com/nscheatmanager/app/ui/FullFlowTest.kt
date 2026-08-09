@@ -160,7 +160,7 @@ class FullFlowTest {
             ) {
                 Box(Modifier.width(320.dp).testTag("localized-320")) {
                     NSCheatManagerApp(
-                        settingsState = com.nscheatmanager.app.ui.settings.SettingsUiState(languageTag = languageTag),
+                        settingsState = com.nscheatmanager.app.ui.settings.SettingsUiState(languageTag = languageTag, showMemoryPage = true),
                         settingsActions = SettingsActions.None,
                         versionName = "1",
                         gameState = com.nscheatmanager.app.ui.game.GameUiState(
@@ -182,9 +182,9 @@ class FullFlowTest {
         compose.onNodeWithTag("editor-notes-tab").performClick()
         compose.onNodeWithTag("editor-notes-text").assertIsDisplayed(); assertInside320("editor-notes-text")
         compose.runOnIdle { editorOpen.value = false }
-        compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed(); assertInside320("device-selector"); assertInside320("overflow-menu")
+        compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed(); compose.onNodeWithTag("cheat-Accessible cheat").assertDoesNotExist(); assertInside320("device-selector"); assertInside320("overflow-menu")
         compose.onNodeWithTag("nav-memory").performClick(); compose.onNodeWithTag("memory-screen").assertIsDisplayed(); assertInside320("memory-action-row")
-        compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed(); compose.onNodeWithTag("cheat-Accessible cheat").performScrollTo().assertIsDisplayed(); assertInside320("cheat-Accessible cheat")
+        compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed(); compose.onNodeWithTag("game-identity").assertDoesNotExist(); compose.onNodeWithTag("cheat-Accessible cheat").performScrollTo().assertIsDisplayed(); assertInside320("cheat-Accessible cheat")
         compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
         compose.onNodeWithTag("language-actions").performScrollTo(); assertInside320("language-actions")
@@ -207,6 +207,12 @@ class FullFlowTest {
         val files = CountingGameFiles(session.identity)
         val external = CountingExternalActions()
         MainActivity.dependenciesForTest = object : com.nscheatmanager.app.MainActivityDependencies by application.dependencies {
+            override val preferences = object : com.nscheatmanager.app.ui.settings.LanguagePreferenceStore {
+                override val languageTag = kotlinx.coroutines.flow.MutableStateFlow("en")
+                override val showMemoryPage = kotlinx.coroutines.flow.MutableStateFlow(true)
+                override suspend fun setLanguageTag(languageTag: String) { this.languageTag.value = languageTag }
+                override suspend fun setShowMemoryPage(show: Boolean) { showMemoryPage.value = show }
+            }
             override fun createGameSession(scope: kotlinx.coroutines.CoroutineScope) = session
             override val gameFiles = files
             override val externalActions = external

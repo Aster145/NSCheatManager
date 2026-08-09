@@ -31,7 +31,7 @@ class CheatMirrorTest {
             mirror.cheatRelative(titleId, buildId),
         )
         assertEquals(
-            "atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2/notes.txt",
+            "atmosphere/contents/0100F2C0115B6000/cheats/notes.txt",
             mirror.notesRelative(titleId, buildId),
         )
         assertEquals(
@@ -39,9 +39,48 @@ class CheatMirrorTest {
             mirror.cheatPath(titleId, buildId),
         )
         assertEquals(
-            root.resolve("atmosphere/contents/0100F2C0115B6000/cheats/A4A8D3E7F29C81A2/notes.txt"),
+            root.resolve("atmosphere/contents/0100F2C0115B6000/cheats/notes.txt"),
             mirror.notesPath(titleId, buildId),
         )
+    }
+
+    @Test
+    fun currentBuildLegacyNotesAreCopiedWhenCanonicalNotesAreMissing() {
+        val root = Files.createTempDirectory("mirror-legacy-notes-")
+        val mirror = CheatMirror(root)
+        val legacy = root.resolve(
+            "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt",
+        )
+        val otherLegacy = root.resolve(
+            "atmosphere/contents/${titleId.hex}/cheats/1111111111111111/notes.txt",
+        )
+        Files.createDirectories(legacy.parent)
+        Files.createDirectories(otherLegacy.parent)
+        Files.write(legacy, "current notes".toByteArray())
+        Files.write(otherLegacy, "other notes".toByteArray())
+
+        val canonical = mirror.notesPath(titleId, buildId)
+
+        assertArrayEquals("current notes".toByteArray(), Files.readAllBytes(canonical))
+        assertTrue(Files.exists(legacy))
+        assertArrayEquals("other notes".toByteArray(), Files.readAllBytes(otherLegacy))
+    }
+
+    @Test
+    fun canonicalNotesTakePriorityOverLegacyNotes() {
+        val root = Files.createTempDirectory("mirror-canonical-notes-")
+        val mirror = CheatMirror(root)
+        val canonical = root.resolve("atmosphere/contents/${titleId.hex}/cheats/notes.txt")
+        val legacy = root.resolve(
+            "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt",
+        )
+        Files.createDirectories(legacy.parent)
+        Files.write(canonical, "canonical".toByteArray())
+        Files.write(legacy, "legacy".toByteArray())
+
+        assertEquals(canonical, mirror.notesPath(titleId, buildId))
+        assertArrayEquals("canonical".toByteArray(), Files.readAllBytes(canonical))
+        assertArrayEquals("legacy".toByteArray(), Files.readAllBytes(legacy))
     }
 
     @Test
