@@ -16,12 +16,20 @@ import com.nscheatmanager.app.data.files.InMemoryEditorDraftStore
 import com.nscheatmanager.app.ui.game.EditableCheatParseException
 import com.nscheatmanager.app.ui.game.GameFileGateway
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class EditorTab { Cheat, Notes }
 
@@ -55,17 +63,39 @@ class CheatEditorViewModel(
     private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
     private val operationGuard: (GameOperationKey) -> Unit = {},
     private val draftStore: EditorDraftStore = InMemoryEditorDraftStore(),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val draftDebounceMillis: Long = DEFAULT_DRAFT_DEBOUNCE_MILLIS,
+    injectedScope: CoroutineScope? = null,
 ) : ViewModel() {
+    private val lifecycleScope = injectedScope ?: viewModelScope
     private var originalCheat = ""
     private var originalNotes = ""
     private var draftToken: String? = savedStateHandle[KEY_DRAFT_TOKEN]
-    private val mutableUiState = MutableStateFlow(restoreState())
+    private val mutableUiState = MutableStateFlow(initialRestoringState())
     val uiState = mutableUiState.asStateFlow()
     private val effectChannel = Channel<EditorEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
+    private val draftSignals = Channel<Unit>(Channel.CONFLATED)
+    private val persistenceMutex = Mutex()
+    private var draftGeneration = 0L
+    private var persistedDraftGeneration = 0L
+    private var closing = false
     private var loadGeneration = 0L
     private var loadJob: Job? = null
+    private var restoreJob: Job? = null
     private var nextDiscardId: Long = savedStateHandle[KEY_NEXT_DISCARD_ID] ?: 1L
+
+    private val persistenceJob = lifecycleScope.launch {
+        while (draftSignals.receiveCatching().isSuccess) {
+            awaitDraftQuietPeriod()
+            flushLatestDraft()
+        }
+    }
+
+    init {
+        require(draftDebounceMillis >= 0L)
+        restoreDraftAsync()
+    }
 
     fun open(identity: GameIdentity) = open(
         identity,
@@ -74,6 +104,8 @@ class CheatEditorViewModel(
 
     fun open(identity: GameIdentity, operationKey: GameOperationKey) {
         val generation = ++loadGeneration
+        closing = false
+        restoreJob?.cancel()
         loadJob?.cancel()
         mutableUiState.value = CheatEditorUiState(
             isOpen = true,
@@ -83,8 +115,8 @@ class CheatEditorViewModel(
             cheatTabLabel = "${identity.buildId.hex}.txt",
             notesTabLabel = "${identity.buildId.hex}/notes.txt",
         )
-        persistState()
-        loadJob = viewModelScope.launch {
+        persistSavedMetadata()
+        loadJob = lifecycleScope.launch {
             runCatching { files.loadEditable(identity) { operationGuard(operationKey) } }
                 .onSuccess { loaded ->
                     if (generation != loadGeneration || mutableUiState.value.identity != identity) return@onSuccess
@@ -98,23 +130,25 @@ class CheatEditorViewModel(
                             dirty = false,
                         )
                     }
-                    persistState()
+                    scheduleDraftPersistence()
                 }
                 .onFailure {
                     if (generation != loadGeneration || mutableUiState.value.identity != identity) return@onFailure
                     mutableUiState.value = CheatEditorUiState()
-                    persistState()
+                    scheduleDraftPersistence()
                     effectChannel.trySend(EditorEffect.Error(it.message))
                 }
         }
     }
 
     fun selectTab(tab: EditorTab) {
+        if (!mutableUiState.value.isOpen || closing) return
         mutableUiState.update { it.copy(selectedTab = tab) }
-        persistState()
+        scheduleDraftPersistence()
     }
 
     fun updateCheatText(text: String) {
+        if (!mutableUiState.value.isOpen || closing) return
         mutableUiState.update {
             it.copy(
                 cheatText = text,
@@ -122,17 +156,18 @@ class CheatEditorViewModel(
                 parseDiagnostic = null,
             )
         }
-        persistState()
+        scheduleDraftPersistence()
     }
 
     fun updateNotesText(text: String) {
+        if (!mutableUiState.value.isOpen || closing) return
         mutableUiState.update {
             it.copy(
                 notesText = text,
                 dirty = it.cheatText != originalCheat || text != originalNotes,
             )
         }
-        persistState()
+        scheduleDraftPersistence()
     }
 
     fun save() {
@@ -144,38 +179,40 @@ class CheatEditorViewModel(
             mutableUiState.update {
                 it.copy(parseDiagnostic = diagnostic)
             }
-            persistState()
+            scheduleDraftPersistence()
             return
         }
         if (state.isSaving) return
         mutableUiState.update { it.copy(isSaving = true, parseDiagnostic = null) }
-        persistState()
-        viewModelScope.launch {
-            runCatching {
+        scheduleDraftPersistence()
+        lifecycleScope.launch {
+            try {
                 files.saveEditable(identity, state.cheatText, state.notesText) { operationGuard(operationKey) }
-            }
-                .onSuccess { saved ->
-                    originalCheat = state.cheatText
-                    originalNotes = state.notesText
-                    mutableUiState.value = CheatEditorUiState()
-                    persistState()
-                    effectChannel.trySend(EditorEffect.Saved(identity, saved))
-                }
-                .onFailure { error ->
-                    if (error is EditableCheatParseException) {
-                        mutableUiState.update {
-                            it.copy(
-                                isSaving = false,
-                                parseDiagnostic = error.diagnostic,
-                            )
+                    .also { saved ->
+                        originalCheat = state.cheatText
+                        originalNotes = state.notesText
+                        if (flushAndClose()) {
+                            effectChannel.trySend(EditorEffect.Saved(identity, saved))
+                        } else {
+                            mutableUiState.update { it.copy(isSaving = false) }
+                            effectChannel.trySend(EditorEffect.Error("Editor draft flush timed out"))
                         }
-                        persistState()
-                    } else {
-                        mutableUiState.update { it.copy(isSaving = false) }
-                        persistState()
-                        effectChannel.trySend(EditorEffect.Error(error.message))
                     }
+            } catch (error: Throwable) {
+                if (error is EditableCheatParseException) {
+                    mutableUiState.update {
+                        it.copy(
+                            isSaving = false,
+                            parseDiagnostic = error.diagnostic,
+                        )
+                    }
+                    scheduleDraftPersistence()
+                } else {
+                    mutableUiState.update { it.copy(isSaving = false) }
+                    scheduleDraftPersistence()
+                    effectChannel.trySend(EditorEffect.Error(error.message))
                 }
+            }
         }
     }
 
@@ -185,56 +222,118 @@ class CheatEditorViewModel(
         if (state.dirty) {
             if (state.pendingDiscard == null) {
                 mutableUiState.update { it.copy(pendingDiscard = PendingEditorDiscard(nextDiscardId++, route)) }
-                persistState()
+                scheduleDraftPersistence()
             }
         } else {
-            closeNow(route)
+            lifecycleScope.launch { flushAndClose(route) }
         }
     }
 
     fun confirmDiscard(id: Long) {
         val pending = mutableUiState.value.pendingDiscard?.takeIf { it.id == id } ?: return
-        closeNow(pending.route)
+        lifecycleScope.launch { flushAndClose(pending.route) }
     }
 
     fun dismissDiscard(id: Long) {
         mutableUiState.update { state ->
             if (state.pendingDiscard?.id == id) state.copy(pendingDiscard = null) else state
         }
-        persistState()
+        scheduleDraftPersistence()
     }
 
     fun acknowledgeNavigation(route: String) {
         mutableUiState.update { state ->
             if (state.pendingNavigationRoute == route) state.copy(pendingNavigationRoute = null) else state
         }
-        persistState()
-    }
-
-    private fun closeNow(navigationRoute: String? = null) {
-        originalCheat = ""
-        originalNotes = ""
-        mutableUiState.value = CheatEditorUiState(pendingNavigationRoute = navigationRoute)
-        persistState()
+        scheduleDraftPersistence()
     }
 
     override fun onCleared() {
+        draftSignals.trySend(Unit)
+        draftSignals.close()
+        closing = true
         effectChannel.close()
     }
 
-    private fun persistState() {
-        val state = mutableUiState.value
-        if (state.isOpen) {
-            val identity = requireNotNull(state.identity)
-            val key = requireNotNull(state.operationKey)
-            draftToken = draftStore.save(
-                draftToken,
-                EditorDraft(identity, key, state.cheatText, state.notesText, originalCheat, originalNotes),
-            )
-        } else {
-            draftToken?.let { runCatching { draftStore.delete(it) } }
-            draftToken = null
+    suspend fun flushLatestDraft(timeoutMillis: Long = DEFAULT_FLUSH_TIMEOUT_MILLIS): Boolean =
+        runCatching {
+            withTimeoutOrNull(timeoutMillis) {
+                persistenceMutex.withLock { persistLatestDraftLocked() }
+                true
+            } ?: false
+        }.getOrElse {
+            effectChannel.trySend(EditorEffect.Error(it.message))
+            false
         }
+
+    suspend fun flushAndClose(
+        navigationRoute: String? = null,
+        timeoutMillis: Long = DEFAULT_FLUSH_TIMEOUT_MILLIS,
+    ): Boolean {
+        if (closing) return !mutableUiState.value.isOpen
+        closing = true
+        val completed = runCatching {
+            withTimeoutOrNull(timeoutMillis) {
+                persistenceMutex.withLock {
+                    persistLatestDraftLocked()
+                    ++loadGeneration
+                    loadJob?.cancel()
+                    restoreJob?.cancel()
+                    originalCheat = ""
+                    originalNotes = ""
+                    mutableUiState.value = CheatEditorUiState(pendingNavigationRoute = navigationRoute)
+                    markDraftChanged(signal = false)
+                    persistLatestDraftLocked()
+                }
+                true
+            } ?: false
+        }.getOrElse {
+            effectChannel.trySend(EditorEffect.Error(it.message))
+            false
+        }
+        if (!completed) closing = false
+        return completed
+    }
+
+    private suspend fun persistLatestDraftLocked() {
+        while (persistedDraftGeneration < draftGeneration) {
+            val targetGeneration = draftGeneration
+            val state = mutableUiState.value
+            if (state.isOpen) {
+                val identity = state.identity ?: return
+                val key = state.operationKey ?: return
+                val snapshot = EditorDraft(
+                    identity,
+                    key,
+                    state.cheatText,
+                    state.notesText,
+                    originalCheat,
+                    originalNotes,
+                )
+                val savedToken = runInterruptible(ioDispatcher) {
+                    draftStore.save(draftToken, snapshot)
+                }
+                draftToken = savedToken
+            } else {
+                val token = draftToken
+                if (token != null) runInterruptible(ioDispatcher) { draftStore.delete(token) }
+                draftToken = null
+            }
+            persistedDraftGeneration = targetGeneration
+            persistSavedMetadata()
+        }
+    }
+
+    private fun scheduleDraftPersistence() = markDraftChanged(signal = true)
+
+    private fun markDraftChanged(signal: Boolean) {
+        draftGeneration++
+        persistSavedMetadata()
+        if (signal) draftSignals.trySend(Unit)
+    }
+
+    private fun persistSavedMetadata() {
+        val state = mutableUiState.value
         savedStateHandle[KEY_DRAFT_TOKEN] = draftToken
         savedStateHandle[KEY_TITLE_ID] = state.operationKey?.titleId?.hex
         savedStateHandle[KEY_BUILD_ID] = state.operationKey?.buildId?.hex
@@ -248,41 +347,86 @@ class CheatEditorViewModel(
         savedStateHandle[KEY_NEXT_DISCARD_ID] = nextDiscardId
     }
 
-    private fun restoreState(): CheatEditorUiState {
-        runCatching { draftStore.cleanupExpired() }
-        val token = draftToken ?: run {
-            return CheatEditorUiState(pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE])
+    private suspend fun awaitDraftQuietPeriod() {
+        if (draftDebounceMillis == 0L) return
+        while (withTimeoutOrNull(draftDebounceMillis) {
+                draftSignals.receiveCatching().getOrNull()
+            } != null
+        ) {
+            // Each new edit restarts the quiet period; the channel is conflated.
         }
-        val title = savedStateHandle.get<String>(KEY_TITLE_ID)?.let(com.nscheatmanager.app.core.model.TitleId::parse)
-            ?: return CheatEditorUiState()
-        val build = savedStateHandle.get<String>(KEY_BUILD_ID)?.let(com.nscheatmanager.app.core.model.BuildId::parse)
-            ?: return CheatEditorUiState()
-        val operationKey = GameOperationKey(
-            deviceId = savedStateHandle.get<String>(KEY_DEVICE_ID) ?: return CheatEditorUiState(),
+    }
+
+    private fun restoreDraftAsync() {
+        val generation = ++loadGeneration
+        val token = draftToken
+        val expectedKey = savedOperationKey()
+        restoreJob = lifecycleScope.launch {
+            val restored = runCatching {
+                runInterruptible(ioDispatcher) {
+                    draftStore.cleanupExpired()
+                    token?.let(draftStore::load)
+                }
+            }.getOrNull()
+            if (generation != loadGeneration) return@launch
+            if (token == null || expectedKey == null) return@launch
+            val draft = restored?.takeIf { it.operationKey == expectedKey }
+            if (draft == null) {
+                draftToken = null
+                mutableUiState.value = CheatEditorUiState(
+                    pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE],
+                )
+                persistSavedMetadata()
+                return@launch
+            }
+            originalCheat = draft.originalCheat
+            originalNotes = draft.originalNotes
+            val discardId = savedStateHandle.get<Long>(KEY_DISCARD_ID)
+            mutableUiState.value = CheatEditorUiState(
+                isOpen = true,
+                identity = draft.identity,
+                operationKey = expectedKey,
+                selectedTab = savedStateHandle.get<String>(KEY_SELECTED_TAB)?.let(EditorTab::valueOf)
+                    ?: EditorTab.Cheat,
+                cheatTabLabel = "${expectedKey.buildId.hex}.txt",
+                notesTabLabel = "${expectedKey.buildId.hex}/notes.txt",
+                cheatText = draft.cheatText,
+                notesText = draft.notesText,
+                dirty = savedStateHandle[KEY_DIRTY] ?: false,
+                pendingDiscard = discardId?.let { PendingEditorDiscard(it, savedStateHandle[KEY_DISCARD_ROUTE]) },
+                pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE],
+            )
+        }
+    }
+
+    private fun initialRestoringState(): CheatEditorUiState {
+        val key = savedOperationKey()
+        return if (draftToken != null && key != null) {
+            CheatEditorUiState(
+                isOpen = true,
+                isLoading = true,
+                operationKey = key,
+                cheatTabLabel = "${key.buildId.hex}.txt",
+                notesTabLabel = "${key.buildId.hex}/notes.txt",
+                pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE],
+            )
+        } else {
+            CheatEditorUiState(pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE])
+        }
+    }
+
+    private fun savedOperationKey(): GameOperationKey? = runCatching {
+        val title = savedStateHandle.get<String>(KEY_TITLE_ID)
+            ?.let(com.nscheatmanager.app.core.model.TitleId::parse) ?: return null
+        val build = savedStateHandle.get<String>(KEY_BUILD_ID)
+            ?.let(com.nscheatmanager.app.core.model.BuildId::parse) ?: return null
+        GameOperationKey(
+            deviceId = savedStateHandle.get<String>(KEY_DEVICE_ID) ?: return null,
             titleId = title,
             buildId = build,
-            generation = savedStateHandle.get<Long>(KEY_GENERATION) ?: return CheatEditorUiState(),
+            generation = savedStateHandle.get<Long>(KEY_GENERATION) ?: return null,
         )
-        val draft = runCatching { draftStore.load(token) }.getOrNull()
-            ?.takeIf { it.operationKey == operationKey }
-            ?: return CheatEditorUiState()
-        originalCheat = draft.originalCheat
-        originalNotes = draft.originalNotes
-        val discardId = savedStateHandle.get<Long>(KEY_DISCARD_ID)
-        return CheatEditorUiState(
-            isOpen = true,
-            identity = draft.identity,
-            operationKey = operationKey,
-            selectedTab = savedStateHandle.get<String>(KEY_SELECTED_TAB)?.let(EditorTab::valueOf) ?: EditorTab.Cheat,
-            cheatTabLabel = "${build.hex}.txt",
-            notesTabLabel = "${build.hex}/notes.txt",
-            cheatText = draft.cheatText,
-            notesText = draft.notesText,
-            dirty = savedStateHandle[KEY_DIRTY] ?: false,
-            pendingDiscard = discardId?.let { PendingEditorDiscard(it, savedStateHandle[KEY_DISCARD_ROUTE]) },
-            pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE],
-        )
-    }
+    }.getOrNull()
 
     class Factory(
         private val files: GameFileGateway,
@@ -319,5 +463,7 @@ class CheatEditorViewModel(
         const val KEY_DISCARD_ROUTE = "editor.discardRoute"
         const val KEY_NAVIGATION_ROUTE = "editor.navigationRoute"
         const val KEY_NEXT_DISCARD_ID = "editor.nextDiscardId"
+        const val DEFAULT_DRAFT_DEBOUNCE_MILLIS = 250L
+        const val DEFAULT_FLUSH_TIMEOUT_MILLIS = 5_000L
     }
 }

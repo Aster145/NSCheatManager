@@ -16,6 +16,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.locks.ReentrantLock
@@ -37,6 +38,18 @@ interface EditorDraftStore {
     fun cleanupExpired()
 }
 
+data class EditorDraftCleanupLimits(
+    val maxEntries: Int = 256,
+    val maxReadBytes: Long = 8L * 1024L * 1024L,
+    val maxDurationMillis: Long = 250L,
+) {
+    init {
+        require(maxEntries > 0)
+        require(maxReadBytes > 0)
+        require(maxDurationMillis in 1..(Long.MAX_VALUE / 1_000_000L))
+    }
+}
+
 internal class InMemoryEditorDraftStore : EditorDraftStore {
     private val drafts = mutableMapOf<String, EditorDraft>()
     override fun save(token: String?, draft: EditorDraft): String = synchronized(drafts) {
@@ -54,13 +67,24 @@ class FileEditorDraftStore internal constructor(
     private val expiryMillis: Long,
     private val clockMillis: () -> Long,
     private val durability: FileDurability,
+    private val cleanupLimits: EditorDraftCleanupLimits,
+    private val monotonicNanos: () -> Long,
 ) : EditorDraftStore {
     constructor(
         root: Path,
         maxTextBytes: Int = DEFAULT_MAX_TEXT_BYTES,
         expiryMillis: Long = DEFAULT_EXPIRY_MILLIS,
         clockMillis: () -> Long = System::currentTimeMillis,
-    ) : this(root, maxTextBytes, expiryMillis, clockMillis, platformFileDurability())
+        cleanupLimits: EditorDraftCleanupLimits = EditorDraftCleanupLimits(),
+    ) : this(
+        root,
+        maxTextBytes,
+        expiryMillis,
+        clockMillis,
+        platformFileDurability(),
+        cleanupLimits,
+        System::nanoTime,
+    )
 
     private val root = root.toAbsolutePath().normalize()
     private val lock = ReentrantLock()
@@ -68,16 +92,16 @@ class FileEditorDraftStore internal constructor(
     init {
         require(maxTextBytes > 0)
         require(expiryMillis > 0)
-        ensureRoot()
     }
 
     override fun save(token: String?, draft: EditorDraft): String = lock.withLock {
+        ensureRoot()
         validateDraft(draft)
         val canonicalToken = token?.let(::validateToken) ?: UUID.randomUUID().toString()
         val target = path(canonicalToken)
         requireRegularOrMissing(target)
         val bytes = encode(canonicalToken, draft, clockMillis())
-        val temporary = root.resolve(".$canonicalToken.tmp-${UUID.randomUUID()}")
+        val temporary = root.resolve(".tmp-$canonicalToken-${UUID.randomUUID()}")
         try {
             writeComplete(temporary, bytes)
             try {
@@ -98,6 +122,7 @@ class FileEditorDraftStore internal constructor(
     }
 
     override fun load(token: String): EditorDraft? = lock.withLock {
+        ensureRoot()
         val canonicalToken = validateToken(token)
         val target = path(canonicalToken)
         if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return null
@@ -108,24 +133,58 @@ class FileEditorDraftStore internal constructor(
     }
 
     override fun delete(token: String) = lock.withLock {
+        ensureRoot()
         val target = path(validateToken(token))
         requireRegularOrMissing(target)
         if (Files.deleteIfExists(target)) durability.forceDirectory(root)
     }
 
     override fun cleanupExpired() = lock.withLock {
+        ensureRoot()
         val cutoff = clockMillis() - expiryMillis
-        Files.list(root).use { paths ->
-            paths.filter { it.fileName.toString().endsWith(DRAFT_SUFFIX) }.forEach { candidate ->
-                if (Files.isSymbolicLink(candidate) || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) return@forEach
-                val token = candidate.fileName.toString().removeSuffix(DRAFT_SUFFIX)
-                val savedAt = runCatching { decode(validateToken(token), Files.readAllBytes(candidate)).savedAt }.getOrNull()
-                if (savedAt != null && savedAt < cutoff && Files.deleteIfExists(candidate)) {
-                    durability.forceDirectory(root)
+        val startedAt = monotonicNanos()
+        val durationBudgetNanos = cleanupLimits.maxDurationMillis * 1_000_000L
+        var visited = 0
+        var readBytes = 0L
+        var changed = false
+        Files.newDirectoryStream(root).use { entries ->
+            for (candidate in entries) {
+                if (visited >= cleanupLimits.maxEntries) break
+                if (monotonicNanos() - startedAt >= durationBudgetNanos) break
+                visited++
+                val attributes = runCatching {
+                    Files.readAttributes(candidate, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+                }.getOrNull() ?: continue
+                if (attributes.isSymbolicLink || !attributes.isRegularFile) continue
+                val name = candidate.fileName.toString()
+                if (isTemporaryName(name)) {
+                    if (attributes.lastModifiedTime().toMillis() < cutoff) {
+                        changed = Files.deleteIfExists(candidate) || changed
+                    }
+                    continue
+                }
+                if (!name.endsWith(DRAFT_SUFFIX)) continue
+                val size = attributes.size()
+                if (size !in 1..maximumSerializedBytes()) {
+                    changed = Files.deleteIfExists(candidate) || changed
+                    continue
+                }
+                if (size > cleanupLimits.maxReadBytes - readBytes) break
+                readBytes += size
+                val token = name.removeSuffix(DRAFT_SUFFIX)
+                val stored = runCatching {
+                    decode(validateToken(token), Files.readAllBytes(candidate))
+                }.getOrNull()
+                if (stored == null || stored.savedAt < cutoff) {
+                    changed = Files.deleteIfExists(candidate) || changed
                 }
             }
         }
+        if (changed) durability.forceDirectory(root)
     }
+
+    private fun isTemporaryName(name: String): Boolean =
+        name.startsWith(".tmp-") || (name.startsWith('.') && ".tmp-" in name)
 
     private fun validateDraft(draft: EditorDraft) {
         require(draft.operationKey.titleId == draft.identity.titleId)

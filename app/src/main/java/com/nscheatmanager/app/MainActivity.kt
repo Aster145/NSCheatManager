@@ -23,6 +23,9 @@ import com.nscheatmanager.app.ui.game.GameScreenActions
 import com.nscheatmanager.app.ui.game.GameViewModel
 import com.nscheatmanager.app.ui.settings.SettingsViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
     private val dependencies get() = (application as NSCheatManagerApplication).dependencies
@@ -45,6 +48,15 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dependencies.preferences.languageTag.collect(::applyLocale)
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    withContext(NonCancellable) { editorViewModel.flushLatestDraft() }
+                }
             }
         }
         setContent {
