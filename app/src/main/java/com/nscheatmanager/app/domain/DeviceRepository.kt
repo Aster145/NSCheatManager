@@ -29,17 +29,26 @@ data class DeviceProfile(
     val isDefault: Boolean = false,
 )
 
+/**
+ * Persists device state and owns the trust epoch for one live connection coordinator.
+ * Profile transactions may use other repository instances, but session save/disconnect events for
+ * one connection must be routed through the same instance because validated memory bases are local
+ * to that live connection and are intentionally never shared through Room.
+ */
 class DeviceRepository(
     private val database: AppDatabase,
     private val preferences: AppPreferences,
     private val clockMillis: () -> Long = { System.currentTimeMillis() },
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    internal val beforeSessionPersist: suspend (deviceId: String) -> Unit = {},
 ) {
     private val mutationMutex = Mutex()
+    private val sessionStateMutex = Mutex()
     private val devices = database.deviceProfileDao()
     private val sessions = database.gameSessionDao()
     private val checkedCheats = database.checkedCheatDao()
     private val activeValidatedSessions = MutableStateFlow<Map<String, GameSessionEntity>>(emptyMap())
+    private val sessionEpochs = mutableMapOf<String, Long>()
 
     fun observeDevices(): Flow<List<DeviceProfile>> = devices.observeAll().map { rows -> rows.map(::toProfile) }
 
@@ -121,7 +130,12 @@ class DeviceRepository(
             true
         }
         if (deleted && selectedDeviceId == deviceId) preferences.clearSelectedDevice()
-        if (deleted) activeValidatedSessions.update { it - deviceId }
+        if (deleted) {
+            sessionStateMutex.withLock {
+                advanceSessionEpoch(deviceId)
+                activeValidatedSessions.update { it - deviceId }
+            }
+        }
     }
 
     suspend fun saveValidatedSession(
@@ -133,6 +147,7 @@ class DeviceRepository(
     ) {
         TitleId.parse(titleId)
         BuildId.parse(buildId)
+        val capturedEpoch = sessionStateMutex.withLock { advanceSessionEpoch(deviceId) }
         require(devices.findById(deviceId) != null) { "Unknown device" }
         val trustedSession = GameSessionEntity(
             deviceId = deviceId,
@@ -143,9 +158,14 @@ class DeviceRepository(
             validated = true,
             recognizedAtEpochMillis = clockMillis(),
         )
+        beforeSessionPersist(deviceId)
         // Persist identity and display-only bases, but keep connection trust process-local.
         sessions.upsert(trustedSession.copy(validated = false))
-        activeValidatedSessions.update { it + (deviceId to trustedSession) }
+        sessionStateMutex.withLock {
+            if (sessionEpochs[deviceId] == capturedEpoch) {
+                activeValidatedSessions.update { it + (deviceId to trustedSession) }
+            }
+        }
     }
 
     fun observeSession(deviceId: String): Flow<GameSessionEntity?> =
@@ -154,8 +174,11 @@ class DeviceRepository(
         }
 
     suspend fun markDeviceDisconnected(deviceId: String) {
-        activeValidatedSessions.update { it - deviceId }
-        sessions.invalidate(deviceId)
+        sessionStateMutex.withLock {
+            advanceSessionEpoch(deviceId)
+            activeValidatedSessions.update { it - deviceId }
+            sessions.invalidate(deviceId)
+        }
     }
 
     suspend fun setChecked(
@@ -196,6 +219,12 @@ class DeviceRepository(
         listOf(profile.sysBotPort, profile.ftpPort, profile.noexsPort).forEach { port ->
             require(port in 1..65535) { "Port must be in 1..65535" }
         }
+    }
+
+    private fun advanceSessionEpoch(deviceId: String): Long {
+        val next = (sessionEpochs[deviceId] ?: 0L) + 1L
+        sessionEpochs[deviceId] = next
+        return next
     }
 
     private fun DeviceProfile.normalized(): DeviceProfile = copy(name = name.trim(), host = host.trim())

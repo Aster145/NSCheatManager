@@ -10,10 +10,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nscheatmanager.app.data.preferences.AppPreferences
 import com.nscheatmanager.app.domain.DeviceRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -229,6 +231,39 @@ class AppDatabaseTest {
         }
 
         assertEquals(1, repository.observeDevices().first().count { it.isDefault })
+    }
+
+    @Test
+    fun disconnectInvalidatesRecognitionThatStartedBeforeIt() = runBlocking {
+        val saveReachedPersistence = CompletableDeferred<Unit>()
+        val allowSaveToContinue = CompletableDeferred<Unit>()
+        val racingRepository = DeviceRepository(
+            database = database,
+            preferences = preferences,
+            beforeSessionPersist = {
+                saveReachedPersistence.complete(Unit)
+                allowSaveToContinue.await()
+            },
+        )
+        val device = racingRepository.addDevice(name = "Race", host = "192.168.1.61")
+
+        val save = async(Dispatchers.IO) {
+            racingRepository.saveValidatedSession(
+                deviceId = device.id,
+                titleId = "0100F2C0115B6000",
+                buildId = "A4A8D3E7F29C81A2",
+                mainBase = "0000007100000000",
+                heapBase = "0000007101000000",
+            )
+        }
+        saveReachedPersistence.await()
+        racingRepository.markDeviceDisconnected(device.id)
+        allowSaveToContinue.complete(Unit)
+        save.await()
+
+        val session = racingRepository.observeSession(device.id).first()
+        assertEquals("A4A8D3E7F29C81A2", session?.buildId)
+        assertFalse(session?.validated == true)
     }
 
     private suspend fun assertFailsWithIllegalArgument(block: suspend () -> Unit) {
