@@ -37,6 +37,31 @@ import org.junit.Test
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class DeviceSessionTest {
     @Test
+    fun expectedOperationKeyRejectsExecutionAfterDeviceGenerationChangesWithoutWriting() = runTest {
+        val first = FakeSysBotbase(GAME_A)
+        val second = FakeSysBotbase(GAME_B)
+        val fixture = fixture(
+            clients = mutableMapOf(
+                DEVICE_A.id to ArrayDeque(listOf(first)),
+                DEVICE_B.id to ArrayDeque(listOf(second)),
+            ),
+        )
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        val expected = requireNotNull(fixture.session.currentOperationKey())
+
+        fixture.session.switchDevice(DEVICE_B).join()
+        try {
+            fixture.session.executeGroup(expected, STATIC_GROUP)
+            fail("Expected the stale operation key to be rejected")
+        } catch (_: StaleGameOperationException) {
+            // Expected.
+        }
+
+        assertTrue(first.writes.isEmpty())
+        assertTrue(second.writes.isEmpty())
+    }
+
+    @Test
     fun connectMovesThroughStatesRecognizesLoadsCheckedWithoutReplaying() = runTest {
         val connectRelease = CompletableDeferred<Unit>()
         val recognizeRelease = CompletableDeferred<Unit>()
@@ -681,6 +706,10 @@ class DeviceSessionTest {
         val report = fixture.session.executeGroup(STATIC_GROUP)
         assertEquals(ExecutionStatus.Complete, report.status)
         assertEquals(setOf("Write once"), fixture.session.state.value.checkedGroups)
+        assertEquals(
+            1_723_456_789_000L,
+            fixture.session.state.value.lastExecutedAtEpochMillis["Write once"],
+        )
         assertEquals(setOf("Write once"), fixture.persistence.checked[Key(DEVICE_A.id, GAME_A)])
         assertEquals(1, client.writes.size)
 
@@ -797,6 +826,7 @@ class DeviceSessionTest {
         val invalidated = mutableListOf<String>()
         val saved = mutableListOf<Pair<String, GameIdentity>>()
         val checked = mutableMapOf<Key, Set<String>>()
+        val lastExecuted = mutableMapOf<Pair<Key, String>, Long>()
         val trustedDevices = mutableSetOf<String>()
         val saveStarted = mutableMapOf<String, CompletableDeferred<Unit>>()
         val saveRelease = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -815,8 +845,10 @@ class DeviceSessionTest {
             trustedDevices += deviceId
         }
 
-        override suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Set<String> =
-            checked[Key(deviceId, identity)].orEmpty()
+        override suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Map<String, Long?> {
+            val key = Key(deviceId, identity)
+            return checked[key].orEmpty().associateWith { lastExecuted[key to it] }
+        }
 
         override suspend fun setChecked(
             deviceId: String,
@@ -826,7 +858,13 @@ class DeviceSessionTest {
         ) {
             val key = Key(deviceId, identity)
             val names = this.checked[key].orEmpty().toMutableSet()
-            if (checked) names += groupName else names -= groupName
+            if (checked) {
+                names += groupName
+                lastExecuted[key to groupName] = 1_723_456_789_000L
+            } else {
+                names -= groupName
+                lastExecuted.remove(key to groupName)
+            }
             this.checked[key] = names
         }
     }

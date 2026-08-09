@@ -11,6 +11,9 @@ class ExecuteCheatGroup(
     private val executor: CheatExecutor = CheatExecutor(),
     private val persistence: SessionPersistence,
 ) {
+    suspend fun checkedGroups(device: DeviceProfile, identity: GameIdentity): Map<String, Long?> =
+        persistence.checkedGroups(device.id, identity)
+
     suspend fun uncheck(device: DeviceProfile, identity: GameIdentity, groupName: String) {
         require(groupName.isNotBlank()) { "Cheat group name must not be blank" }
         persistence.setChecked(

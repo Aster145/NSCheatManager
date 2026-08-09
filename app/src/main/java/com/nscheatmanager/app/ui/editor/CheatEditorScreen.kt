@@ -28,9 +28,13 @@ data class CheatEditorActions(
     val notesChanged: (String) -> Unit,
     val save: () -> Unit,
     val cancel: () -> Unit,
+    val requestNavigation: (String) -> Unit,
+    val confirmDiscard: (Long) -> Unit,
+    val dismissDiscard: (Long) -> Unit,
+    val acknowledgeNavigation: (String) -> Unit,
 ) {
     companion object {
-        val None = CheatEditorActions({}, {}, {}, {}, {})
+        val None = CheatEditorActions({}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -78,8 +82,15 @@ fun CheatEditorScreen(
             )
         }
         state.validationMessage?.let { message ->
+            val localizedMessage = state.validationLine?.let {
+                stringResource(
+                    R.string.message_join,
+                    stringResource(R.string.line_number, it),
+                    message,
+                )
+            } ?: message
             Text(
-                listOfNotNull(state.validationLine?.let { "Line $it" }, message).joinToString(" · "),
+                localizedMessage,
                 modifier = Modifier.testTag("editor-validation"),
                 color = MaterialTheme.colorScheme.error,
             )

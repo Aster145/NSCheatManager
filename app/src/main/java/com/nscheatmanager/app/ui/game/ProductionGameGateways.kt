@@ -6,6 +6,7 @@ import com.nscheatmanager.app.domain.DeviceProfile
 import com.nscheatmanager.app.domain.DeviceRepository
 import com.nscheatmanager.app.domain.DeviceSession
 import com.nscheatmanager.app.domain.DeviceSessionState
+import com.nscheatmanager.app.domain.GameOperationKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -41,10 +42,17 @@ class DeviceSessionGateway(private val delegate: DeviceSession) : GameSessionGat
         delegate.detachDmnt()
     }
 
-    override suspend fun executeGroup(group: CheatGroup): ExecutionReport = delegate.executeGroup(group)
+    override fun currentOperationKey(): GameOperationKey? = delegate.currentOperationKey()
 
-    override suspend fun uncheckGroup(groupName: String) {
-        delegate.uncheckGroup(groupName)
+    override fun requireCurrentOperationKey(expected: GameOperationKey) {
+        delegate.requireCurrentOperationKey(expected)
+    }
+
+    override suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport =
+        delegate.executeGroup(expected, group)
+
+    override suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) {
+        delegate.uncheckGroup(expected, groupName)
     }
 
     override suspend fun close() {

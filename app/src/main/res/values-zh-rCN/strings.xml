@@ -92,4 +92,17 @@
     <string name="upload_detail">上传当前本地文件？金手指：%1$d B，备注：%2$d B。</string>
     <string name="direct_upload_warning">FTP 服务器不支持原子重命名。确认使用带恢复处理的直接覆盖。</string>
     <string name="empty_notes_share_warning">notes.txt 不存在。是否在分享 ZIP 中加入空的 notes.txt？</string>
+    <string name="cheat_state_checked">已勾选</string>
+    <string name="cheat_state_unchecked">未勾选</string>
+    <string name="cheat_state_unsupported">不可用：不支持的代码</string>
+    <string name="message_join">%1$s · %2$s</string>
+    <string name="line_number">第 %1$d 行</string>
+    <string name="opcode_value">操作码 %1$s</string>
+    <string name="diagnostic_unsupported_opcode">第 %1$d 行 · 不支持的操作码 %2$s</string>
+    <string name="diagnostic_unsupported_form">第 %1$d 行 · 不支持的格式：%2$s</string>
+    <string name="diagnostic_unsupported_memory_region">第 %1$d 行 · 不支持的内存区域 %2$s</string>
+    <string name="diagnostic_arithmetic_overflow">第 %1$d 行 · 算术溢出</string>
+    <string name="diagnostic_instruction_limit">第 %1$d 行 · 指令数量超过限制 %2$s</string>
+    <string name="diagnostic_io_limit">第 %1$d 行 · I/O 超过限制 %2$s 字节</string>
+    <string name="last_executed">上次执行：%1$s</string>
 </resources>

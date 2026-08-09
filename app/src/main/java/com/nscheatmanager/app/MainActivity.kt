@@ -33,7 +33,7 @@ class MainActivity : AppCompatActivity() {
         GameViewModel.Factory(dependencies.gameDevices, dependencies.gameFiles, dependencies::createGameSession)
     }
     private val editorViewModel by viewModels<CheatEditorViewModel> {
-        CheatEditorViewModel.Factory(dependencies.gameFiles)
+        CheatEditorViewModel.Factory(dependencies.gameFiles, gameViewModel::requireCurrentOperationKey)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,8 +70,10 @@ class MainActivity : AppCompatActivity() {
                         cheatChecked = gameViewModel::onCheatChecked,
                         editModeChanged = { enabled ->
                             if (enabled) {
-                                gameViewModel.currentIdentityForEditor()?.let(editorViewModel::open)
-                                    ?: gameViewModel.onEditorUnavailable()
+                                val identity = gameViewModel.currentIdentityForEditor()
+                                val key = gameViewModel.currentOperationKeyForEditor()
+                                if (identity != null && key != null) editorViewModel.open(identity, key)
+                                else gameViewModel.onEditorUnavailable()
                             } else {
                                 editorViewModel.requestClose()
                             }
@@ -87,12 +89,8 @@ class MainActivity : AppCompatActivity() {
                     gameEffects = gameViewModel.effects,
                     gameEffectActions = GameEffectActions(
                         zipDocument = gameViewModel::onZipDocument,
-                        confirmZipImport = gameViewModel::confirmZipImport,
-                        confirmDownload = gameViewModel::confirmDownload,
-                        discardDownload = gameViewModel::discardDownload,
-                        confirmUpload = gameViewModel::confirmUpload,
-                        confirmDirectUpload = gameViewModel::confirmDirectUpload,
-                        confirmEmptyNotesShare = gameViewModel::confirmEmptyNotesShare,
+                        confirmPending = gameViewModel::confirmPending,
+                        dismissPending = gameViewModel::dismissPending,
                         externalFailure = gameViewModel::onExternalFailure,
                     ),
                     editorState = editorState,
@@ -102,10 +100,13 @@ class MainActivity : AppCompatActivity() {
                         notesChanged = editorViewModel::updateNotesText,
                         save = editorViewModel::save,
                         cancel = editorViewModel::requestClose,
+                        requestNavigation = editorViewModel::requestClose,
+                        confirmDiscard = editorViewModel::confirmDiscard,
+                        dismissDiscard = editorViewModel::dismissDiscard,
+                        acknowledgeNavigation = editorViewModel::acknowledgeNavigation,
                     ),
                     editorEffects = editorViewModel.effects,
                     editorEffectActions = EditorEffectActions(
-                        confirmDiscard = editorViewModel::confirmDiscard,
                         saved = { saved -> gameViewModel.onLocalFileSaved(saved.identity, saved.file) },
                     ),
                 )

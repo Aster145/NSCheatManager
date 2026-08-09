@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -34,10 +35,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.domain.ConnectionState
@@ -45,6 +50,8 @@ import com.nscheatmanager.app.domain.DeviceProfile
 import com.nscheatmanager.app.ui.editor.CheatEditorActions
 import com.nscheatmanager.app.ui.editor.CheatEditorScreen
 import com.nscheatmanager.app.ui.editor.CheatEditorUiState
+import java.text.DateFormat
+import java.util.Date
 
 data class GameScreenActions(
     val selectDevice: (String) -> Unit,
@@ -275,30 +282,108 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
     }
     state.groups.forEachIndexed { index, group ->
         if (index > 0) HorizontalDivider()
+        val diagnosticText = if (!group.executable) localizedDiagnostic(group) else null
+        val accessibilityLabel = diagnosticText?.let {
+            stringResource(R.string.message_join, group.name, it)
+        } ?: group.name
+        val stateLabel = stringResource(
+            when {
+                !group.executable -> R.string.cheat_state_unsupported
+                group.checked -> R.string.cheat_state_checked
+                else -> R.string.cheat_state_unchecked
+            },
+        )
         Row(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            Modifier
+                .fillMaxWidth()
+                .testTag("cheat-${group.name}")
+                .semantics(mergeDescendants = true) {
+                    contentDescription = accessibilityLabel
+                    stateDescription = stateLabel
+                }
+                .toggleable(
+                    value = group.checked,
+                    enabled = group.executable && !group.executing,
+                    role = Role.Checkbox,
+                    onValueChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
+                )
+                .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(
-                modifier = Modifier.testTag("cheat-${group.name}"),
+                modifier = Modifier.clearAndSetSemantics { },
                 checked = group.checked,
                 enabled = group.executable && !group.executing,
-                onCheckedChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
+                onCheckedChange = null,
             )
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleSmall)
                 if (!group.executable) {
                     Text(
-                        group.validationDetail ?: listOfNotNull(
-                            group.unsupportedLine?.let { "Line $it" },
-                            group.unsupportedOpcode?.let { "opcode $it" },
-                        ).joinToString(" · "),
+                        diagnosticText.orEmpty(),
                         color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                group.lastExecutedAtEpochMillis?.let { timestamp ->
+                    val locale = LocalConfiguration.current.locales[0]
+                    val formatted = remember(timestamp, locale) {
+                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM, locale)
+                            .format(Date(timestamp))
+                    }
+                    Text(
+                        stringResource(R.string.last_executed, formatted),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
             if (group.executing) CircularProgressIndicator(Modifier.width(24.dp))
         }
+    }
+}
+
+@Composable
+private fun localizedDiagnostic(group: CheatGroupUiState): String {
+    val diagnostic = group.diagnostic
+    if (diagnostic != null) {
+        return when (diagnostic.kind) {
+            CheatDiagnosticKind.UnsupportedOpcode -> stringResource(
+                R.string.diagnostic_unsupported_opcode,
+                diagnostic.line,
+                diagnostic.opcode.orEmpty(),
+            )
+            CheatDiagnosticKind.UnsupportedForm -> stringResource(
+                R.string.diagnostic_unsupported_form,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+            CheatDiagnosticKind.UnsupportedMemoryRegion -> stringResource(
+                R.string.diagnostic_unsupported_memory_region,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+            CheatDiagnosticKind.ArithmeticOverflow -> stringResource(
+                R.string.diagnostic_arithmetic_overflow,
+                diagnostic.line,
+            )
+            CheatDiagnosticKind.InstructionLimitExceeded -> stringResource(
+                R.string.diagnostic_instruction_limit,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+            CheatDiagnosticKind.IoLimitExceeded -> stringResource(
+                R.string.diagnostic_io_limit,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+        }
+    }
+    val line = group.unsupportedLine?.let { stringResource(R.string.line_number, it) }
+    val opcode = group.unsupportedOpcode?.let { stringResource(R.string.opcode_value, it) }
+    return when {
+        line != null && opcode != null -> stringResource(R.string.message_join, line, opcode)
+        line != null -> line
+        opcode != null -> opcode
+        else -> stringResource(R.string.unsupported_cheat)
     }
 }

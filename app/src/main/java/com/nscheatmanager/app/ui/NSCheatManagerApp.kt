@@ -18,11 +18,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,15 +31,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nscheatmanager.app.R
-import com.nscheatmanager.app.data.files.ZipInspection
 import com.nscheatmanager.app.domain.DeviceProfile
-import com.nscheatmanager.app.domain.DirectOverwriteConfirmation
-import com.nscheatmanager.app.domain.TransferReport
 import com.nscheatmanager.app.ui.about.AboutScreen
 import com.nscheatmanager.app.ui.editor.CheatEditorActions
 import com.nscheatmanager.app.ui.editor.CheatEditorUiState
 import com.nscheatmanager.app.ui.editor.EditorEffect
 import com.nscheatmanager.app.ui.game.GameEffect
+import com.nscheatmanager.app.ui.game.GameConfirmation
+import com.nscheatmanager.app.ui.game.CheatDiagnosticKind
+import com.nscheatmanager.app.ui.game.CheatDiagnosticUiState
 import com.nscheatmanager.app.ui.game.GameMessage
 import com.nscheatmanager.app.ui.game.GameScreen
 import com.nscheatmanager.app.ui.game.GameScreenActions
@@ -76,25 +73,20 @@ data class SettingsActions(
 
 data class GameEffectActions(
     val zipDocument: (ByteArray) -> Unit,
-    val confirmZipImport: (ZipInspection) -> Unit,
-    val confirmDownload: (TransferReport.RequiresLocalOverwriteConfirmation) -> Unit,
-    val discardDownload: (TransferReport.RequiresLocalOverwriteConfirmation) -> Unit,
-    val confirmUpload: (com.nscheatmanager.app.domain.UploadPreview) -> Unit,
-    val confirmDirectUpload: (com.nscheatmanager.app.domain.UploadConfirmation, DirectOverwriteConfirmation) -> Unit,
-    val confirmEmptyNotesShare: () -> Unit,
+    val confirmPending: (Long) -> Unit,
+    val dismissPending: (Long) -> Unit,
     val externalFailure: (Throwable) -> Unit,
 ) {
     companion object {
-        val None = GameEffectActions({}, {}, {}, {}, {}, { _, _ -> }, {}, {})
+        val None = GameEffectActions({}, {}, {}, {})
     }
 }
 
 data class EditorEffectActions(
-    val confirmDiscard: () -> Unit,
     val saved: (EditorEffect.Saved) -> Unit,
 ) {
     companion object {
-        val None = EditorEffectActions({}, {})
+        val None = EditorEffectActions({})
     }
 }
 
@@ -131,9 +123,6 @@ fun NSCheatManagerApp(
     val operationFailedLabel = stringResource(R.string.operation_failed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    val confirmations = remember { mutableStateListOf<GameEffect>() }
-    var confirmDiscard by remember { mutableStateOf(false) }
-    var pendingRoute by remember { mutableStateOf<String?>(null) }
 
     val documentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
@@ -152,14 +141,12 @@ fun NSCheatManagerApp(
                     context.startActivity(Intent.createChooser(intent, shareChooserTitle))
                 }.onFailure(gameEffectActions.externalFailure)
                 is GameEffect.Message -> snackbar.showSnackbar(resources.gameMessage(effect))
-                else -> confirmations += effect
             }
         }
     }
     LaunchedEffect(editorEffects) {
         editorEffects.collect { effect ->
             when (effect) {
-                EditorEffect.ConfirmDiscard -> confirmDiscard = true
                 is EditorEffect.Saved -> editorEffectActions.saved(effect)
                 is EditorEffect.Error -> snackbar.showSnackbar(
                     listOfNotNull(operationFailedLabel, effect.detail).joinToString(": "),
@@ -176,12 +163,17 @@ fun NSCheatManagerApp(
         }
     }
     fun requestNavigation(target: String) {
-        if (editorState.dirty) {
-            pendingRoute = target
-            editorActions.cancel()
+        if (editorState.isOpen) {
+            editorActions.requestNavigation(target)
         } else {
-            if (editorState.isOpen) editorActions.cancel()
             navigateMain(target)
+        }
+    }
+
+    LaunchedEffect(editorState.pendingNavigationRoute) {
+        editorState.pendingNavigationRoute?.let { target ->
+            navigateMain(target)
+            editorActions.acknowledgeNavigation(target)
         }
     }
 
@@ -247,44 +239,27 @@ fun NSCheatManagerApp(
         }
     }
 
-    confirmations.firstOrNull()?.let { effect ->
+    gameState.pendingConfirmation?.let { confirmation ->
         GameConfirmationDialog(
-            effect = effect,
-            onDismiss = {
-                if (effect is GameEffect.ConfirmDownload) gameEffectActions.discardDownload(effect.report)
-                confirmations.remove(effect)
-            },
-            onConfirm = {
-                when (effect) {
-                    is GameEffect.ConfirmZipImport -> gameEffectActions.confirmZipImport(effect.inspection)
-                    is GameEffect.ConfirmDownload -> gameEffectActions.confirmDownload(effect.report)
-                    is GameEffect.ConfirmUpload -> gameEffectActions.confirmUpload(effect.preview)
-                    is GameEffect.ConfirmDirectUpload ->
-                        gameEffectActions.confirmDirectUpload(effect.upload, effect.direct)
-                    GameEffect.ConfirmEmptyNotesShare -> gameEffectActions.confirmEmptyNotesShare()
-                    else -> Unit
-                }
-                confirmations.remove(effect)
-            },
+            confirmation = confirmation,
+            onDismiss = { gameEffectActions.dismissPending(confirmation.id) },
+            onConfirm = { gameEffectActions.confirmPending(confirmation.id) },
         )
     }
-    if (confirmDiscard) {
+    editorState.pendingDiscard?.let { pending ->
         AlertDialog(
             modifier = Modifier.testTag("confirm-discard-editor"),
-            onDismissRequest = { confirmDiscard = false; pendingRoute = null },
+            onDismissRequest = { editorActions.dismissDiscard(pending.id) },
             title = { Text(stringResource(R.string.discard_changes_title)) },
             text = { Text(stringResource(R.string.discard_changes_message)) },
             dismissButton = {
-                TextButton(onClick = { confirmDiscard = false; pendingRoute = null }) {
+                TextButton(onClick = { editorActions.dismissDiscard(pending.id) }) {
                     Text(stringResource(R.string.cancel))
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    confirmDiscard = false
-                    editorEffectActions.confirmDiscard()
-                    pendingRoute?.let(::navigateMain)
-                    pendingRoute = null
+                    editorActions.confirmDiscard(pending.id)
                 }) { Text(stringResource(R.string.discard)) }
             },
         )
@@ -292,23 +267,22 @@ fun NSCheatManagerApp(
 }
 
 @Composable
-private fun GameConfirmationDialog(effect: GameEffect, onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    val description = when (effect) {
-        is GameEffect.ConfirmZipImport -> buildString {
-            append(effect.inspection.titleId.hex).append(" / ").append(effect.inspection.buildId.hex)
-            append("\n").append(stringResource(R.string.groups_count, effect.inspection.groupCount))
-            append("\n").append(effect.inspection.entries.joinToString("\n") { "${it.relativePath} (${it.expandedSize} B)" })
-            if (effect.inspection.overwriteImpact.cheat || effect.inspection.overwriteImpact.notes) {
+private fun GameConfirmationDialog(confirmation: GameConfirmation, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val description = when (confirmation) {
+        is GameConfirmation.ZipImport -> buildString {
+            append(confirmation.inspection.titleId.hex).append(" / ").append(confirmation.inspection.buildId.hex)
+            append("\n").append(stringResource(R.string.groups_count, confirmation.inspection.groupCount))
+            append("\n").append(confirmation.inspection.entries.joinToString("\n") { "${it.relativePath} (${it.expandedSize} B)" })
+            if (confirmation.inspection.overwriteImpact.cheat || confirmation.inspection.overwriteImpact.notes) {
                 append("\n").append(stringResource(R.string.files_will_be_overwritten))
             }
         }
-        is GameEffect.ConfirmDownload ->
-            stringResource(R.string.download_overwrite_detail, effect.report.cheatBytes, effect.report.notesBytes ?: 0)
-        is GameEffect.ConfirmUpload ->
-            stringResource(R.string.upload_detail, effect.preview.cheatBytes, effect.preview.notesBytes ?: 0)
-        is GameEffect.ConfirmDirectUpload -> stringResource(R.string.direct_upload_warning)
-        GameEffect.ConfirmEmptyNotesShare -> stringResource(R.string.empty_notes_share_warning)
-        else -> ""
+        is GameConfirmation.Download ->
+            stringResource(R.string.download_overwrite_detail, confirmation.report.cheatBytes, confirmation.report.notesBytes ?: 0)
+        is GameConfirmation.Upload ->
+            stringResource(R.string.upload_detail, confirmation.preview.cheatBytes, confirmation.preview.notesBytes ?: 0)
+        is GameConfirmation.DirectUpload -> stringResource(R.string.direct_upload_warning)
+        is GameConfirmation.EmptyNotesShare -> stringResource(R.string.empty_notes_share_warning)
     }
     AlertDialog(
         modifier = Modifier.testTag("game-confirmation"),
@@ -336,7 +310,44 @@ private fun Resources.gameMessage(effect: GameEffect.Message): String {
             GameMessage.DETACH_COMPLETE -> R.string.detach_complete
         },
     )
-    return listOfNotNull(label, effect.sourceLine?.let { "Line $it" }, effect.detail).joinToString(" · ")
+    return listOfNotNull(
+        label,
+        effect.diagnostic?.let(::localizedDiagnostic)
+            ?: effect.sourceLine?.let { getString(R.string.line_number, it) },
+        effect.detail.takeIf { effect.diagnostic == null },
+    ).reduceOrNull { left, right -> getString(R.string.message_join, left, right) } ?: label
+}
+
+private fun Resources.localizedDiagnostic(diagnostic: CheatDiagnosticUiState): String = when (diagnostic.kind) {
+    CheatDiagnosticKind.UnsupportedOpcode -> getString(
+        R.string.diagnostic_unsupported_opcode,
+        diagnostic.line,
+        diagnostic.opcode.orEmpty(),
+    )
+    CheatDiagnosticKind.UnsupportedForm -> getString(
+        R.string.diagnostic_unsupported_form,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.UnsupportedMemoryRegion -> getString(
+        R.string.diagnostic_unsupported_memory_region,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.ArithmeticOverflow -> getString(
+        R.string.diagnostic_arithmetic_overflow,
+        diagnostic.line,
+    )
+    CheatDiagnosticKind.InstructionLimitExceeded -> getString(
+        R.string.diagnostic_instruction_limit,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.IoLimitExceeded -> getString(
+        R.string.diagnostic_io_limit,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
 }
 
 @Composable

@@ -10,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeNoException
 import org.junit.Test
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -55,6 +56,38 @@ class CheatMirrorTest {
         Files.list(target.parent).use { siblings ->
             assertFalse(siblings.anyMatch { it.fileName.toString().contains(".tmp-") })
         }
+    }
+
+    @Test
+    fun atomicReplaceAllRollsBackBothOriginalsWhenSecondPublishFails() {
+        val root = Files.createTempDirectory("mirror-pair-rollback-")
+        var stagePublishes = 0
+        var failed = false
+        val mirror = CheatMirror(root, MirrorMoveOps { source, target ->
+            if (source.fileName.toString().contains(".stage-") && ++stagePublishes == 2 && !failed) {
+                failed = true
+                throw java.io.IOException("injected second publish failure")
+            }
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
+        })
+        val cheat = mirror.cheatPath(titleId, buildId)
+        val notes = mirror.notesPath(titleId, buildId)
+        Files.createDirectories(cheat.parent)
+        Files.createDirectories(notes.parent)
+        Files.write(cheat, "old cheat".toByteArray())
+        Files.write(notes, "old notes".toByteArray())
+
+        assertThrows(java.io.IOException::class.java) {
+            mirror.atomicReplaceAll(
+                linkedMapOf(
+                    cheat to "new cheat".toByteArray(),
+                    notes to "new notes".toByteArray(),
+                ),
+            )
+        }
+
+        assertArrayEquals("old cheat".toByteArray(), Files.readAllBytes(cheat))
+        assertArrayEquals("old notes".toByteArray(), Files.readAllBytes(notes))
     }
 
     @Test

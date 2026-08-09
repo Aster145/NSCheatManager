@@ -211,10 +211,19 @@ class DeviceRepository(
     }
 
     fun observeCheckedGroupNames(deviceId: String, titleId: String, buildId: String): Flow<Set<String>> {
+        return observeCheckedGroups(deviceId, titleId, buildId)
+            .map { rows -> rows.keys }
+    }
+
+    fun observeCheckedGroups(
+        deviceId: String,
+        titleId: String,
+        buildId: String,
+    ): Flow<Map<String, Long?>> {
         val canonicalTitleId = TitleId.parse(titleId).hex
         val canonicalBuildId = BuildId.parse(buildId).hex
         return checkedCheats.observeChecked(deviceId, canonicalTitleId, canonicalBuildId)
-            .map { rows -> rows.mapTo(linkedSetOf()) { it.groupName } }
+            .map { rows -> rows.associate { it.groupName to it.lastExecutedAtEpochMillis } }
     }
 
     private fun validateProfile(profile: DeviceProfile) {

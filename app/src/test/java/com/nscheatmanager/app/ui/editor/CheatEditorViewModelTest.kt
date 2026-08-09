@@ -12,18 +12,24 @@ import com.nscheatmanager.app.domain.UploadPreview
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
 import com.nscheatmanager.app.ui.game.EditableGameFiles
 import com.nscheatmanager.app.ui.game.GameFileGateway
+import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -82,41 +88,100 @@ class CheatEditorViewModelTest {
     }
 
     @Test
-    fun dirtyCloseRequiresOneShotConfirmationBeforeDiscarding() = runTest(dispatcher) {
+    fun dirtyCloseAndPendingRouteRemainInStateUntilExplicitAck() = runTest(dispatcher) {
         val viewModel = CheatEditorViewModel(FakeEditorGateway("[Valid]\n04000000 00000020 00000001\n", ""))
         viewModel.open(GAME)
         advanceUntilIdle()
         viewModel.updateNotesText("dirty")
-        val confirmation = async { viewModel.effects.first() }
-
-        viewModel.requestClose()
-        assertTrue(confirmation.await() is EditorEffect.ConfirmDiscard)
+        viewModel.requestClose("settings")
+        val confirmation = requireNotNull(viewModel.uiState.value.pendingDiscard)
         assertTrue(viewModel.uiState.value.isOpen)
 
-        viewModel.confirmDiscard()
+        viewModel.confirmDiscard(confirmation.id)
         assertFalse(viewModel.uiState.value.isOpen)
+        assertEquals("settings", viewModel.uiState.value.pendingNavigationRoute)
+        viewModel.acknowledgeNavigation("settings")
+        assertNull(viewModel.uiState.value.pendingNavigationRoute)
     }
 
-    private class FakeEditorGateway(
+    @Test
+    fun openingAnotherGameCancelsAndDiscardsAnOutOfOrderOlderLoad() = runTest(dispatcher) {
+        val firstRelease = CompletableDeferred<Unit>()
+        val secondRelease = CompletableDeferred<Unit>()
+        val gateway = OutOfOrderEditorGateway(firstRelease, secondRelease)
+        val viewModel = CheatEditorViewModel(gateway)
+
+        viewModel.open(GAME)
+        runCurrent()
+        viewModel.open(GAME_B)
+        runCurrent()
+        secondRelease.complete(Unit)
+        runCurrent()
+        firstRelease.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(GAME_B, viewModel.uiState.value.identity)
+        assertEquals("[Second]\n", viewModel.uiState.value.cheatText)
+    }
+
+    @Test
+    fun dirtyTextAndDiscardRouteRestoreFromSavedStateHandle() = runTest(dispatcher) {
+        val handle = SavedStateHandle()
+        val gateway = FakeEditorGateway("[Valid]\n04000000 00000020 00000001\n", "")
+        val first = CheatEditorViewModel(gateway, savedStateHandle = handle)
+        first.open(GAME)
+        advanceUntilIdle()
+        first.updateNotesText("survives process recreation")
+        first.requestClose("about")
+        val pendingId = requireNotNull(first.uiState.value.pendingDiscard).id
+
+        val restored = CheatEditorViewModel(gateway, savedStateHandle = handle)
+
+        assertEquals("survives process recreation", restored.uiState.value.notesText)
+        assertEquals(pendingId, restored.uiState.value.pendingDiscard?.id)
+        assertEquals("about", restored.uiState.value.pendingDiscard?.route)
+    }
+
+    private class OutOfOrderEditorGateway(
+        private val firstRelease: CompletableDeferred<Unit>,
+        private val secondRelease: CompletableDeferred<Unit>,
+    ) : FakeEditorGateway("", "") {
+        override suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit): EditableGameFiles {
+            checkpoint()
+            withContext(NonCancellable) {
+                if (identity == GAME) firstRelease.await() else secondRelease.await()
+            }
+            return EditableGameFiles(if (identity == GAME) "[First]\n" else "[Second]\n", "", false)
+        }
+    }
+
+    private open class FakeEditorGateway(
         private val cheat: String,
         private val notes: String,
     ) : GameFileGateway {
         var saves = 0
         var savedNotes = ""
-        override suspend fun loadEditable(identity: GameIdentity) = EditableGameFiles(cheat, notes, true)
-        override suspend fun saveEditable(identity: GameIdentity, cheatText: String, notesText: String): CheatFile {
+        override suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit) =
+            EditableGameFiles(cheat, notes, true).also { checkpoint() }
+        override suspend fun saveEditable(
+            identity: GameIdentity,
+            cheatText: String,
+            notesText: String,
+            checkpoint: () -> Unit,
+        ): CheatFile {
+            checkpoint()
             saves++
             savedNotes = notesText
             return com.nscheatmanager.app.cheats.parser.CheatFileParser().parse(cheatText)
         }
         override suspend fun inspectZip(bytes: ByteArray): ZipInspection = error("unused")
-        override suspend fun importZip(inspection: ZipInspection) = Unit
-        override suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean) = error("unused")
-        override suspend fun notesExist(identity: GameIdentity) = true
-        override suspend fun download(profile: DeviceProfile, identity: GameIdentity, confirmation: DownloadOverwriteConfirmation?): TransferReport = error("unused")
+        override suspend fun importZip(inspection: ZipInspection, checkpoint: () -> Unit) = Unit
+        override suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean, checkpoint: () -> Unit) = error("unused")
+        override suspend fun notesExist(identity: GameIdentity, checkpoint: () -> Unit) = true
+        override suspend fun download(profile: DeviceProfile, identity: GameIdentity, confirmation: DownloadOverwriteConfirmation?, checkpoint: () -> Unit): TransferReport = error("unused")
         override suspend fun discardDownload(confirmation: DownloadOverwriteConfirmation) = Unit
-        override suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity): UploadPreview = error("unused")
-        override suspend fun upload(confirmation: UploadConfirmation, direct: com.nscheatmanager.app.domain.DirectOverwriteConfirmation?): TransferReport = error("unused")
+        override suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity, checkpoint: () -> Unit): UploadPreview = error("unused")
+        override suspend fun upload(confirmation: UploadConfirmation, direct: com.nscheatmanager.app.domain.DirectOverwriteConfirmation?, checkpoint: () -> Unit): TransferReport = error("unused")
     }
 
     private companion object {
@@ -125,6 +190,12 @@ class CheatEditorViewModelTest {
             BuildId.parse("A4A8D3E7F29C81A2"),
             0x1000u,
             0x8000u,
+        )
+        val GAME_B = GameIdentity(
+            TitleId.parse("0100000000000002"),
+            BuildId.parse("BBBBBBBBBBBBBBBB"),
+            0x2000u,
+            0x9000u,
         )
     }
 }

@@ -42,14 +42,14 @@ data class LoadedCheatDocument(
 data class RecognizedCurrentGame(
     val identity: GameIdentity,
     val document: LoadedCheatDocument,
-    val checkedGroups: Set<String>,
+    val checkedGroups: Map<String, Long?>,
 )
 
 /** Persistence boundary which keeps the Task 7 process-local trust epoch authoritative. */
 interface SessionPersistence {
     suspend fun invalidate(deviceId: String)
     suspend fun saveValidated(deviceId: String, identity: GameIdentity)
-    suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Set<String>
+    suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Map<String, Long?>
     suspend fun setChecked(
         deviceId: String,
         identity: GameIdentity,
@@ -75,8 +75,8 @@ class DeviceRepositorySessionPersistence(
         )
     }
 
-    override suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Set<String> =
-        repository.observeCheckedGroupNames(
+    override suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Map<String, Long?> =
+        repository.observeCheckedGroups(
             deviceId,
             identity.titleId.hex,
             identity.buildId.hex,
@@ -145,7 +145,7 @@ class RecognizeCurrentGame(
         checkpoint()
         val document = cheatLibrary.load(identity)
         checkpoint()
-        val checked = persistence.checkedGroups(device.id, identity).toSet()
+        val checked = persistence.checkedGroups(device.id, identity).toMap()
         checkpoint()
         try {
             persistence.saveValidated(device.id, identity)

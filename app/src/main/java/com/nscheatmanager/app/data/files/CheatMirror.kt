@@ -13,12 +13,21 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
+internal fun interface MirrorMoveOps {
+    fun move(source: Path, target: Path)
+}
+
 /** App-controlled mirror of Atmosphere's per-title cheat layout. */
-class CheatMirror(root: Path) {
+class CheatMirror internal constructor(
+    root: Path,
+    private val moveOps: MirrorMoveOps,
+) {
+    constructor(root: Path) : this(root, MirrorMoveOps(::defaultMoveReplacing))
     constructor(root: File) : this(root.toPath())
 
     val root: Path = root.toAbsolutePath().normalize()
@@ -43,26 +52,52 @@ class CheatMirror(root: Path) {
      * atomic-move support fall back to a replace move after the complete temporary file is synced.
      */
     fun atomicReplace(target: Path, content: ByteArray) {
-        withWriteTransaction {
-            val canonicalTarget = requireInsideRoot(target)
-            val parent = requireNotNull(canonicalTarget.parent) { "Mirror target must have a parent" }
-            createDirectoriesSecure(parent)
-            requireRegularOrMissing(canonicalTarget)
-            val temporary = parent.resolve(".${canonicalTarget.fileName}.tmp-${UUID.randomUUID()}")
+        atomicReplaceAll(mapOf(target to content))
+    }
 
+    /** Crash-recoverable all-or-nothing publication for related mirror files. */
+    fun atomicReplaceAll(replacements: Map<Path, ByteArray>) {
+        require(replacements.isNotEmpty()) { "At least one mirror replacement is required" }
+        withWriteTransaction {
+            recoverTransactionsLocked()
+            val transactionId = UUID.randomUUID().toString()
+            val entries = replacements.entries.map { (target, content) ->
+                val canonical = requireInsideRoot(target)
+                val parent = requireNotNull(canonical.parent) { "Mirror target must have a parent" }
+                createDirectoriesSecure(parent)
+                requireRegularOrMissing(canonical)
+                TransactionEntry(
+                    target = canonical,
+                    content = content,
+                    oldExisted = Files.exists(canonical, LinkOption.NOFOLLOW_LINKS),
+                    stage = parent.resolve(".${canonical.fileName}.stage-$transactionId"),
+                    backup = parent.resolve(".${canonical.fileName}.backup-$transactionId"),
+                )
+            }
+            require(entries.map(TransactionEntry::target).distinct().size == entries.size) {
+                "Mirror transaction targets must be unique"
+            }
+            val journal = journalPath(transactionId)
+            createDirectoriesSecure(requireNotNull(journal.parent))
+            writeJournal(journal, TransactionPhase.INIT, entries)
             try {
-                FileChannel.open(
-                    temporary,
-                    StandardOpenOption.CREATE_NEW,
-                    StandardOpenOption.WRITE,
-                ).use { channel ->
-                    val buffer = ByteBuffer.wrap(content)
-                    while (buffer.hasRemaining()) channel.write(buffer)
-                    channel.force(true)
+                entries.forEach { writeCompleteFile(it.stage, it.content) }
+                writeJournal(journal, TransactionPhase.STAGED, entries)
+                entries.filter(TransactionEntry::oldExisted).forEach { entry ->
+                    writeCompleteFile(entry.backup, Files.readAllBytes(entry.target))
                 }
-                moveReplacing(temporary, canonicalTarget)
-            } finally {
-                Files.deleteIfExists(temporary)
+                writeJournal(journal, TransactionPhase.BACKED_UP, entries)
+                entries.forEach { moveReplacing(it.stage, it.target) }
+                writeJournal(journal, TransactionPhase.PUBLISHED, entries)
+                cleanupTransaction(entries, journal)
+            } catch (error: Throwable) {
+                try {
+                    rollbackTransaction(entries)
+                    cleanupTransaction(entries, journal)
+                } catch (rollback: Throwable) {
+                    error.addSuppressed(rollback)
+                }
+                throw error
             }
         }
     }
@@ -79,13 +114,8 @@ class CheatMirror(root: Path) {
         require(!Files.isSymbolicLink(canonicalSource)) { "Mirror source may not be a symbolic link" }
         require(!Files.isSymbolicLink(canonicalTarget)) { "Mirror target may not be a symbolic link" }
         try {
-            Files.move(
-                canonicalSource,
-                canonicalTarget,
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: AtomicMoveNotSupportedException) {
+            moveOps.move(canonicalSource, canonicalTarget)
+        } catch (error: AtomicMoveNotSupportedException) {
             Files.move(canonicalSource, canonicalTarget, StandardCopyOption.REPLACE_EXISTING)
         }
     }
@@ -151,6 +181,108 @@ class CheatMirror(root: Path) {
 
     private fun resolveRelative(relative: String): Path = requireInsideRoot(root.resolve(relative))
 
+    private fun recoverTransactionsLocked() {
+        val directory = root.resolve(TRANSACTION_DIRECTORY)
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return
+        validateNoSymlinkComponents(directory)
+        require(Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) { "Transaction path must be a directory" }
+        Files.list(directory).use { paths ->
+            paths.filter { it.fileName.toString().endsWith(JOURNAL_SUFFIX) }.forEach { journal ->
+                val recovered = readJournal(journal)
+                if (recovered.phase != TransactionPhase.PUBLISHED) rollbackTransaction(recovered.entries)
+                cleanupTransaction(recovered.entries, journal)
+            }
+        }
+    }
+
+    private fun rollbackTransaction(entries: List<TransactionEntry>) {
+        entries.asReversed().forEach { entry ->
+            if (entry.oldExisted) {
+                if (Files.exists(entry.backup, LinkOption.NOFOLLOW_LINKS)) {
+                    val rollback = entry.target.parent.resolve(".${entry.target.fileName}.rollback-${UUID.randomUUID()}")
+                    try {
+                        writeCompleteFile(rollback, Files.readAllBytes(entry.backup))
+                        moveReplacing(rollback, entry.target)
+                    } finally {
+                        Files.deleteIfExists(rollback)
+                    }
+                }
+            } else {
+                Files.deleteIfExists(entry.target)
+            }
+        }
+    }
+
+    private fun cleanupTransaction(entries: List<TransactionEntry>, journal: Path) {
+        entries.forEach { entry ->
+            Files.deleteIfExists(entry.stage)
+            Files.deleteIfExists(entry.backup)
+        }
+        Files.deleteIfExists(journal)
+    }
+
+    private fun writeJournal(journal: Path, phase: TransactionPhase, entries: List<TransactionEntry>) {
+        val bytes = buildString {
+            append("version=1\nphase=").append(phase.name).append("\ncount=").append(entries.size).append('\n')
+            entries.forEachIndexed { index, entry ->
+                val relative = root.relativize(entry.target).toString().replace('\\', '/')
+                append("path.").append(index).append('=').append(
+                    Base64.getUrlEncoder().withoutPadding().encodeToString(relative.toByteArray(Charsets.UTF_8)),
+                ).append('\n')
+                append("old.").append(index).append('=').append(entry.oldExisted).append('\n')
+            }
+        }.toByteArray(Charsets.UTF_8)
+        val temporary = journal.parent.resolve(".${journal.fileName}.tmp-${UUID.randomUUID()}")
+        try {
+            writeCompleteFile(temporary, bytes)
+            moveReplacing(temporary, journal)
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
+    private fun readJournal(journal: Path): RecoveredTransaction {
+        requireRegularOrMissing(journal)
+        require(Files.isRegularFile(journal, LinkOption.NOFOLLOW_LINKS)) { "Transaction journal is missing" }
+        val fields = String(Files.readAllBytes(journal), Charsets.UTF_8).lineSequence().filter(String::isNotEmpty)
+            .associate { line ->
+                val separator = line.indexOf('=')
+                require(separator > 0) { "Malformed transaction journal" }
+                line.substring(0, separator) to line.substring(separator + 1)
+            }
+        require(fields["version"] == "1") { "Unsupported transaction journal" }
+        val count = requireNotNull(fields["count"]).toInt()
+        val transactionId = journal.fileName.toString().removeSuffix(JOURNAL_SUFFIX)
+        val entries = (0 until count).map { index ->
+            val relative = String(
+                Base64.getUrlDecoder().decode(requireNotNull(fields["path.$index"])),
+                Charsets.UTF_8,
+            )
+            val target = requireInsideRoot(root.resolve(relative))
+            val parent = requireNotNull(target.parent)
+            TransactionEntry(
+                target = target,
+                content = byteArrayOf(),
+                oldExisted = requireNotNull(fields["old.$index"]).toBooleanStrict(),
+                stage = parent.resolve(".${target.fileName}.stage-$transactionId"),
+                backup = parent.resolve(".${target.fileName}.backup-$transactionId"),
+            )
+        }
+        return RecoveredTransaction(TransactionPhase.valueOf(requireNotNull(fields["phase"])), entries)
+    }
+
+    private fun journalPath(transactionId: String): Path =
+        requireInsideRoot(root.resolve(TRANSACTION_DIRECTORY).resolve("$transactionId$JOURNAL_SUFFIX"))
+
+    private fun writeCompleteFile(path: Path, content: ByteArray) {
+        requireInsideRoot(path)
+        FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
+            val buffer = ByteBuffer.wrap(content)
+            while (buffer.hasRemaining()) channel.write(buffer)
+            channel.force(true)
+        }
+    }
+
     private fun ensureRootDirectory() {
         if (Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
             require(!Files.isSymbolicLink(root) && Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
@@ -164,5 +296,35 @@ class CheatMirror(root: Path) {
 
     private companion object {
         val Locks = ConcurrentHashMap<Path, ReentrantLock>()
+        const val TRANSACTION_DIRECTORY = ".mirror-transactions"
+        const val JOURNAL_SUFFIX = ".journal"
+
+        fun defaultMoveReplacing(source: Path, target: Path) {
+            try {
+                Files.move(
+                    source,
+                    target,
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(source, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
     }
+
+    private data class TransactionEntry(
+        val target: Path,
+        val content: ByteArray,
+        val oldExisted: Boolean,
+        val stage: Path,
+        val backup: Path,
+    )
+
+    private data class RecoveredTransaction(
+        val phase: TransactionPhase,
+        val entries: List<TransactionEntry>,
+    )
+
+    private enum class TransactionPhase { INIT, STAGED, BACKED_UP, PUBLISHED }
 }

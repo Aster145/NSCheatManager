@@ -14,6 +14,7 @@ import com.nscheatmanager.app.data.files.ZipInspection
 import com.nscheatmanager.app.domain.ConnectionState
 import com.nscheatmanager.app.domain.DeviceProfile
 import com.nscheatmanager.app.domain.DeviceSessionState
+import com.nscheatmanager.app.domain.GameOperationKey
 import com.nscheatmanager.app.domain.DirectOverwriteConfirmation
 import com.nscheatmanager.app.domain.DownloadOverwriteConfirmation
 import com.nscheatmanager.app.domain.TransferReport
@@ -40,6 +41,24 @@ data class CheatGroupUiState(
     val unsupportedLine: Int? = null,
     val unsupportedOpcode: String? = null,
     val validationDetail: String? = null,
+    val diagnostic: CheatDiagnosticUiState? = null,
+    val lastExecutedAtEpochMillis: Long? = null,
+)
+
+enum class CheatDiagnosticKind {
+    UnsupportedOpcode,
+    UnsupportedForm,
+    UnsupportedMemoryRegion,
+    ArithmeticOverflow,
+    InstructionLimitExceeded,
+    IoLimitExceeded,
+}
+
+data class CheatDiagnosticUiState(
+    val kind: CheatDiagnosticKind,
+    val line: Int,
+    val opcode: String? = null,
+    val argument: String? = null,
 )
 
 data class GameUiState(
@@ -58,7 +77,43 @@ data class GameUiState(
     val canDownload: Boolean = false,
     val busy: Boolean = false,
     val editMode: Boolean = false,
+    val pendingConfirmation: GameConfirmation? = null,
 )
+
+sealed interface GameConfirmation {
+    val id: Long
+    val key: GameOperationKey
+
+    data class ZipImport(
+        override val id: Long,
+        override val key: GameOperationKey,
+        val inspection: ZipInspection,
+    ) : GameConfirmation
+
+    data class Download(
+        override val id: Long,
+        override val key: GameOperationKey,
+        val report: TransferReport.RequiresLocalOverwriteConfirmation,
+    ) : GameConfirmation
+
+    data class Upload(
+        override val id: Long,
+        override val key: GameOperationKey,
+        val preview: UploadPreview,
+    ) : GameConfirmation
+
+    data class DirectUpload(
+        override val id: Long,
+        override val key: GameOperationKey,
+        val upload: UploadConfirmation,
+        val direct: DirectOverwriteConfirmation,
+    ) : GameConfirmation
+
+    data class EmptyNotesShare(
+        override val id: Long,
+        override val key: GameOperationKey,
+    ) : GameConfirmation
+}
 
 enum class GameMessage {
     SELECT_DEVICE,
@@ -78,19 +133,12 @@ data class ShareArchive(val fileName: String, val bytes: ByteArray)
 
 sealed interface GameEffect {
     data object OpenZipDocument : GameEffect
-    data class ConfirmZipImport(val inspection: ZipInspection) : GameEffect
-    data class ConfirmDownload(val report: TransferReport.RequiresLocalOverwriteConfirmation) : GameEffect
-    data class ConfirmUpload(val preview: UploadPreview) : GameEffect
-    data class ConfirmDirectUpload(
-        val upload: UploadConfirmation,
-        val direct: DirectOverwriteConfirmation,
-    ) : GameEffect
-    data object ConfirmEmptyNotesShare : GameEffect
     data class Share(val archive: ShareArchive) : GameEffect
     data class Message(
         val message: GameMessage,
         val detail: String? = null,
         val sourceLine: Int? = null,
+        val diagnostic: CheatDiagnosticUiState? = null,
     ) : GameEffect
 }
 
@@ -107,8 +155,10 @@ interface GameSessionGateway {
     fun disconnect()
     fun recognizeAgain()
     suspend fun detachDmnt()
-    suspend fun executeGroup(group: CheatGroup): ExecutionReport
-    suspend fun uncheckGroup(groupName: String)
+    fun currentOperationKey(): GameOperationKey?
+    fun requireCurrentOperationKey(expected: GameOperationKey)
+    suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport
+    suspend fun uncheckGroup(expected: GameOperationKey, groupName: String)
     suspend fun close()
 }
 
@@ -123,7 +173,12 @@ class GameViewModel private constructor(
     val uiState = mutableUiState.asStateFlow()
     private val effectChannel = Channel<GameEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
-    private val claimedExecutions = linkedSetOf<String>()
+    private data class GroupClaim(val key: GameOperationKey, val groupName: String)
+    private val claimedExecutions = linkedSetOf<GroupClaim>()
+    private val locallyCompleted = linkedSetOf<GroupClaim>()
+    private val pendingUnchecks = linkedSetOf<GroupClaim>()
+    private val confirmationLock = Any()
+    private var nextConfirmationId = 1L
     private var sessionState = DeviceSessionState()
     private var displayedCheatFile: CheatFile? = null
     private var displayedIdentity: GameIdentity? = null
@@ -205,25 +260,27 @@ class GameViewModel private constructor(
     fun onCheatChecked(groupName: String, wasChecked: Boolean, isChecked: Boolean) {
         if (wasChecked == isChecked) return
         val group = currentGroup(groupName) ?: return
+        val key = sessionState.operationKey
         if (isChecked) {
             val row = mutableUiState.value.groups.firstOrNull { it.name == groupName }
-            if (row?.executable != true || !sessionState.gameValidated) {
+            if (row?.executable != true || key == null) {
                 effectChannel.trySend(
                     GameEffect.Message(
                         if (row?.executable == false) GameMessage.UNSUPPORTED_CHEAT else GameMessage.SESSION_NOT_READY,
                         row?.validationDetail,
                         row?.unsupportedLine,
+                        row?.diagnostic,
                     ),
                 )
                 return
             }
             synchronized(claimedExecutions) {
-                if (!claimedExecutions.add(groupName)) return
+                if (!claimedExecutions.add(GroupClaim(key, groupName))) return
             }
             republishGroups()
             viewModelScope.launch {
                 try {
-                    val report = session.executeGroup(group)
+                    val report = session.executeGroup(key, group)
                     if (report.status != ExecutionStatus.Complete) {
                         effectChannel.trySend(
                             GameEffect.Message(
@@ -232,19 +289,32 @@ class GameViewModel private constructor(
                                 report.failureLine,
                             ),
                         )
+                    } else synchronized(claimedExecutions) {
+                        locallyCompleted += GroupClaim(key, groupName)
                     }
                 } catch (error: Throwable) {
                     showFailure(error)
                 } finally {
-                    synchronized(claimedExecutions) { claimedExecutions.remove(groupName) }
+                    synchronized(claimedExecutions) {
+                        val claim = GroupClaim(key, groupName)
+                        if (claim !in locallyCompleted) claimedExecutions.remove(claim)
+                    }
                     republishGroups()
                 }
             }
         } else {
+            if (key == null) return
+            synchronized(claimedExecutions) {
+                val claim = GroupClaim(key, groupName)
+                locallyCompleted.remove(claim)
+                claimedExecutions.remove(claim)
+                pendingUnchecks += claim
+            }
             setCheckedLocally(groupName, false)
             viewModelScope.launch {
-                runCatching { session.uncheckGroup(groupName) }
+                runCatching { session.uncheckGroup(key, groupName) }
                     .onFailure {
+                        synchronized(claimedExecutions) { pendingUnchecks.remove(GroupClaim(key, groupName)) }
                         setCheckedLocally(groupName, true)
                         showFailure(it)
                     }
@@ -261,31 +331,41 @@ class GameViewModel private constructor(
     }
 
     fun onZipDocument(bytes: ByteArray) {
+        val key = session.currentOperationKey()
+        if (key == null) {
+            effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
+            return
+        }
         viewModelScope.launch {
             runCatching { files.inspectZip(bytes) }
+                .mapCatching { inspection ->
+                    session.requireCurrentOperationKey(key)
+                    inspection
+                }
                 .onSuccess { inspection ->
-                    val identity = readyIdentity()
-                    if (identity == null || identity.titleId != inspection.titleId || identity.buildId != inspection.buildId) {
+                    if (key.titleId != inspection.titleId || key.buildId != inspection.buildId) {
                         showFailure(IllegalArgumentException("ZIP TID/BID does not match the current recognized game"))
                     } else {
-                        effectChannel.trySend(GameEffect.ConfirmZipImport(inspection))
+                        setConfirmation { id -> GameConfirmation.ZipImport(id, key, inspection) }
                     }
                 }
                 .onFailure { showFailure(it) }
         }
     }
 
-    fun confirmZipImport(inspection: ZipInspection) {
+    private fun confirmZipImport(key: GameOperationKey, inspection: ZipInspection) {
         viewModelScope.launch {
             runCatching {
+                session.requireCurrentOperationKey(key)
                 val identity = requireNotNull(readyIdentity()) { "A validated game is required" }
-                require(identity.titleId == inspection.titleId && identity.buildId == inspection.buildId) {
+                require(key.titleId == inspection.titleId && key.buildId == inspection.buildId) {
                     "ZIP TID/BID no longer matches the current recognized game"
                 }
-                files.importZip(inspection)
+                files.importZip(inspection) { session.requireCurrentOperationKey(key) }
+                session.requireCurrentOperationKey(key)
                 displayedIdentity?.takeIf {
                     it.titleId == inspection.titleId && it.buildId == inspection.buildId
-                }?.let { reloadLocal(it) }
+                }?.let { reloadLocal(key, it) }
             }.onSuccess {
                 effectChannel.trySend(GameEffect.Message(GameMessage.IMPORT_COMPLETE))
             }.onFailure { showFailure(it) }
@@ -295,60 +375,62 @@ class GameViewModel private constructor(
     fun onDownloadRequested() {
         val profile = selectedProfile()
         val identity = readyIdentity()
-        if (profile == null || identity == null) {
+        val key = session.currentOperationKey()
+        if (profile == null || identity == null || key == null) {
             effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
             return
         }
-        runDownload(profile, identity, null)
+        runDownload(key, profile, identity, null)
     }
 
-    fun confirmDownload(report: TransferReport.RequiresLocalOverwriteConfirmation) {
+    private fun confirmDownload(key: GameOperationKey, report: TransferReport.RequiresLocalOverwriteConfirmation) {
         val profile = selectedProfile()
         val identity = readyIdentity()
-        if (profile == null || identity == null) return
-        runDownload(profile, identity, report.confirmation)
+        if (profile == null || identity == null || profile.id != key.deviceId) return
+        runDownload(key, profile, identity, report.confirmation)
     }
 
-    fun discardDownload(report: TransferReport.RequiresLocalOverwriteConfirmation) {
+    private fun discardDownload(report: TransferReport.RequiresLocalOverwriteConfirmation) {
         viewModelScope.launch { files.discardDownload(report.confirmation) }
     }
 
     fun onUploadRequested() {
         val profile = selectedProfile()
         val identity = readyIdentity()
-        if (profile == null || identity == null) {
+        val key = session.currentOperationKey()
+        if (profile == null || identity == null || key == null) {
             effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
             return
         }
         viewModelScope.launch {
-            runCatching { files.previewUpload(profile, identity) }
-                .onSuccess { effectChannel.trySend(GameEffect.ConfirmUpload(it)) }
+            runCatching { files.previewUpload(profile, identity) { session.requireCurrentOperationKey(key) } }
+                .mapCatching { preview -> session.requireCurrentOperationKey(key); preview }
+                .onSuccess { preview -> setConfirmation { id -> GameConfirmation.Upload(id, key, preview) } }
                 .onFailure { showFailure(it) }
         }
     }
 
-    fun confirmUpload(preview: UploadPreview) = runUpload(preview.confirmation, null)
-
-    fun confirmDirectUpload(upload: UploadConfirmation, direct: DirectOverwriteConfirmation) =
-        runUpload(upload, direct)
-
     fun onShareZipRequested() {
         val identity = readyIdentity()
-        if (identity == null) {
+        val key = session.currentOperationKey()
+        if (identity == null || key == null) {
             effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
             return
         }
         viewModelScope.launch {
-            runCatching { files.notesExist(identity) }
+            runCatching { files.notesExist(identity) { session.requireCurrentOperationKey(key) } }
+                .mapCatching { exists -> session.requireCurrentOperationKey(key); exists }
                 .onSuccess { exists ->
-                    if (exists) exportZip(identity, false)
-                    else effectChannel.trySend(GameEffect.ConfirmEmptyNotesShare)
+                    if (exists) exportZip(key, identity, false)
+                    else setConfirmation { id -> GameConfirmation.EmptyNotesShare(id, key) }
                 }
                 .onFailure { showFailure(it) }
         }
     }
 
     fun currentIdentityForEditor(): GameIdentity? = readyIdentity()
+    fun currentOperationKeyForEditor(): GameOperationKey? = session.currentOperationKey()
+    fun requireCurrentOperationKey(expected: GameOperationKey) = session.requireCurrentOperationKey(expected)
 
     fun onEditorUnavailable() {
         effectChannel.trySend(GameEffect.Message(GameMessage.SESSION_NOT_READY))
@@ -358,8 +440,24 @@ class GameViewModel private constructor(
         showFailure(error)
     }
 
-    fun confirmEmptyNotesShare() {
-        readyIdentity()?.let { identity -> viewModelScope.launch { exportZip(identity, true) } }
+    fun confirmPending(id: Long) {
+        when (val confirmation = takeConfirmation(id)) {
+            is GameConfirmation.ZipImport -> confirmZipImport(confirmation.key, confirmation.inspection)
+            is GameConfirmation.Download -> confirmDownload(confirmation.key, confirmation.report)
+            is GameConfirmation.Upload -> runUpload(confirmation.key, confirmation.preview.confirmation, null)
+            is GameConfirmation.DirectUpload ->
+                runUpload(confirmation.key, confirmation.upload, confirmation.direct)
+            is GameConfirmation.EmptyNotesShare -> {
+                val identity = readyIdentity()
+                if (identity != null) viewModelScope.launch { exportZip(confirmation.key, identity, true) }
+            }
+            null -> Unit
+        }
+    }
+
+    fun dismissPending(id: Long) {
+        val confirmation = takeConfirmation(id)
+        if (confirmation is GameConfirmation.Download) discardDownload(confirmation.report)
     }
 
     fun onLocalFileSaved(identity: GameIdentity, file: CheatFile) {
@@ -371,20 +469,27 @@ class GameViewModel private constructor(
     }
 
     private fun runDownload(
+        key: GameOperationKey,
         profile: DeviceProfile,
         identity: GameIdentity,
         confirmation: DownloadOverwriteConfirmation?,
     ) {
         viewModelScope.launch {
-            runCatching { files.download(profile, identity, confirmation) }
+            runCatching {
+                files.download(profile, identity, confirmation) { session.requireCurrentOperationKey(key) }
+            }
+                .mapCatching { report ->
+                    session.requireCurrentOperationKey(key)
+                    report
+                }
                 .onSuccess { report ->
                     when (report) {
                         TransferReport.RemoteCheatMissing ->
                             effectChannel.trySend(GameEffect.Message(GameMessage.REMOTE_CHEAT_MISSING))
                         is TransferReport.RequiresLocalOverwriteConfirmation ->
-                            effectChannel.trySend(GameEffect.ConfirmDownload(report))
+                            setConfirmation { id -> GameConfirmation.Download(id, key, report) }
                         is TransferReport.Downloaded -> {
-                            reloadLocal(identity)
+                            reloadLocal(key, identity)
                             effectChannel.trySend(GameEffect.Message(GameMessage.DOWNLOAD_COMPLETE))
                         }
                         TransferReport.StaleLocalSnapshot ->
@@ -398,13 +503,22 @@ class GameViewModel private constructor(
         }
     }
 
-    private fun runUpload(upload: UploadConfirmation, direct: DirectOverwriteConfirmation?) {
+    private fun runUpload(
+        key: GameOperationKey,
+        upload: UploadConfirmation,
+        direct: DirectOverwriteConfirmation?,
+    ) {
         viewModelScope.launch {
-            runCatching { files.upload(upload, direct) }
+            runCatching {
+                session.requireCurrentOperationKey(key)
+                files.upload(upload, direct) { session.requireCurrentOperationKey(key) }
+            }.mapCatching { report -> session.requireCurrentOperationKey(key); report }
                 .onSuccess { report ->
                     when (report) {
                         is TransferReport.RequiresDirectOverwriteConfirmation ->
-                            effectChannel.trySend(GameEffect.ConfirmDirectUpload(upload, report.confirmation))
+                            setConfirmation { id ->
+                                GameConfirmation.DirectUpload(id, key, upload, report.confirmation)
+                            }
                         is TransferReport.Uploaded ->
                             effectChannel.trySend(GameEffect.Message(GameMessage.UPLOAD_COMPLETE))
                         TransferReport.StaleLocalSnapshot ->
@@ -416,8 +530,15 @@ class GameViewModel private constructor(
         }
     }
 
-    private suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean) {
-        runCatching { files.exportZip(identity, includeEmptyNotes) }
+    private suspend fun exportZip(
+        key: GameOperationKey,
+        identity: GameIdentity,
+        includeEmptyNotes: Boolean,
+    ) {
+        runCatching {
+            session.requireCurrentOperationKey(key)
+            files.exportZip(identity, includeEmptyNotes) { session.requireCurrentOperationKey(key) }
+        }.mapCatching { bytes -> session.requireCurrentOperationKey(key); bytes }
             .onSuccess { bytes ->
                 effectChannel.trySend(
                     GameEffect.Share(ShareArchive("${identity.titleId.hex}_${identity.buildId.hex}.zip", bytes)),
@@ -426,8 +547,10 @@ class GameViewModel private constructor(
             .onFailure { showFailure(it) }
     }
 
-    private suspend fun reloadLocal(identity: GameIdentity) {
-        val editable = files.loadEditable(identity)
+    private suspend fun reloadLocal(key: GameOperationKey, identity: GameIdentity) {
+        session.requireCurrentOperationKey(key)
+        val editable = files.loadEditable(identity) { session.requireCurrentOperationKey(key) }
+        session.requireCurrentOperationKey(key)
         displayedCheatFile = com.nscheatmanager.app.cheats.parser.CheatFileParser().parse(editable.cheatText)
         localCheatOverride = displayedCheatFile
         localOverrideIdentity = identity
@@ -441,6 +564,24 @@ class GameViewModel private constructor(
             localOverrideIdentity = null
         }
         sessionState = next
+        val currentKey = next.operationKey
+        synchronized(claimedExecutions) {
+            claimedExecutions.removeAll { it.key != currentKey }
+            locallyCompleted.removeAll { it.key != currentKey }
+            pendingUnchecks.removeAll { it.key != currentKey }
+            currentKey?.let { key ->
+                val acknowledged = next.checkedGroups.mapTo(linkedSetOf()) { GroupClaim(key, it) }
+                locallyCompleted.removeAll(acknowledged)
+                claimedExecutions.removeAll(acknowledged)
+                pendingUnchecks.removeAll { it.key == key && it.groupName !in next.checkedGroups }
+            }
+        }
+        val staleConfirmation = synchronized(confirmationLock) {
+            mutableUiState.value.pendingConfirmation?.takeIf { it.key != currentKey }?.also {
+                mutableUiState.update { state -> state.copy(pendingConfirmation = null) }
+            }
+        }
+        if (staleConfirmation is GameConfirmation.Download) discardDownload(staleConfirmation.report)
         displayedIdentity = next.game
         displayedCheatFile = localCheatOverride ?: next.cheatFile
         val identity = next.game
@@ -476,16 +617,23 @@ class GameViewModel private constructor(
         val validation = validator.validate(group, identity)
         val invalid = (validation as? ValidationResult.Invalid)?.error
         val unsupported = invalid as? CheatValidationError.UnsupportedOpcode
+        val diagnostic = invalid?.toUiDiagnostic()
+        val key = state.operationKey
+        val claim = key?.let { GroupClaim(it, group.name) }
         CheatGroupUiState(
             name = group.name,
-            checked = group.name in state.checkedGroups,
+            checked = claim != null && synchronized(claimedExecutions) {
+                claim !in pendingUnchecks && (group.name in state.checkedGroups || claim in locallyCompleted)
+            },
             executable = invalid == null && state.gameValidated,
             executing = group.name in state.executingGroups || synchronized(claimedExecutions) {
-                group.name in claimedExecutions
+                claim in claimedExecutions
             },
             unsupportedLine = invalid?.line,
             unsupportedOpcode = unsupported?.opcode?.let { "0x${it.toString(16).uppercase()}" },
             validationDetail = invalid?.toDisplayText(),
+            diagnostic = diagnostic,
+            lastExecutedAtEpochMillis = state.lastExecutedAtEpochMillis[group.name],
         )
     }
 
@@ -503,6 +651,19 @@ class GameViewModel private constructor(
 
     private fun showFailure(error: Throwable) {
         effectChannel.trySend(GameEffect.Message(GameMessage.OPERATION_FAILED, error.message))
+    }
+
+    private fun setConfirmation(create: (Long) -> GameConfirmation) {
+        synchronized(confirmationLock) {
+            if (mutableUiState.value.pendingConfirmation != null) return
+            mutableUiState.update { it.copy(pendingConfirmation = create(nextConfirmationId++)) }
+        }
+    }
+
+    private fun takeConfirmation(id: Long): GameConfirmation? = synchronized(confirmationLock) {
+        val pending = mutableUiState.value.pendingConfirmation?.takeIf { it.id == id } ?: return@synchronized null
+        mutableUiState.update { it.copy(pendingConfirmation = null) }
+        pending
     }
 
     override fun onCleared() {
@@ -525,6 +686,38 @@ class GameViewModel private constructor(
 }
 
 private fun hexAddress(value: ULong): String = "0x${value.toString(16).uppercase()}"
+
+private fun CheatValidationError.toUiDiagnostic(): CheatDiagnosticUiState = when (this) {
+    is CheatValidationError.UnsupportedOpcode -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.UnsupportedOpcode,
+        line = line,
+        opcode = "0x${opcode.toString(16).uppercase()}",
+    )
+    is CheatValidationError.UnsupportedForm -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.UnsupportedForm,
+        line = line,
+        argument = reason,
+    )
+    is CheatValidationError.UnsupportedMemoryRegion -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.UnsupportedMemoryRegion,
+        line = line,
+        argument = region.toString(),
+    )
+    is CheatValidationError.ArithmeticOverflow -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.ArithmeticOverflow,
+        line = line,
+    )
+    is CheatValidationError.InstructionLimitExceeded -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.InstructionLimitExceeded,
+        line = line,
+        argument = limit.toString(),
+    )
+    is CheatValidationError.IoLimitExceeded -> CheatDiagnosticUiState(
+        kind = CheatDiagnosticKind.IoLimitExceeded,
+        line = line,
+        argument = limitBytes.toString(),
+    )
+}
 
 private fun CheatValidationError.toDisplayText(): String = when (this) {
     is CheatValidationError.UnsupportedOpcode -> "Line $line · opcode 0x${opcode.toString(16).uppercase()}"

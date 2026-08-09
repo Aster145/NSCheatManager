@@ -35,22 +35,33 @@ class EditableCheatParseException(
 ) : IllegalArgumentException("Cheat parse failed at line $line: $detail")
 
 interface GameFileGateway {
-    suspend fun loadEditable(identity: GameIdentity): EditableGameFiles
-    suspend fun saveEditable(identity: GameIdentity, cheatText: String, notesText: String): CheatFile
+    suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit = {}): EditableGameFiles
+    suspend fun saveEditable(
+        identity: GameIdentity,
+        cheatText: String,
+        notesText: String,
+        checkpoint: () -> Unit = {},
+    ): CheatFile
     suspend fun inspectZip(bytes: ByteArray): ZipInspection
-    suspend fun importZip(inspection: ZipInspection)
-    suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean): ByteArray
-    suspend fun notesExist(identity: GameIdentity): Boolean
+    suspend fun importZip(inspection: ZipInspection, checkpoint: () -> Unit = {})
+    suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean, checkpoint: () -> Unit = {}): ByteArray
+    suspend fun notesExist(identity: GameIdentity, checkpoint: () -> Unit = {}): Boolean
     suspend fun download(
         profile: DeviceProfile,
         identity: GameIdentity,
         confirmation: DownloadOverwriteConfirmation? = null,
+        checkpoint: () -> Unit = {},
     ): TransferReport
     suspend fun discardDownload(confirmation: DownloadOverwriteConfirmation)
-    suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity): UploadPreview
+    suspend fun previewUpload(
+        profile: DeviceProfile,
+        identity: GameIdentity,
+        checkpoint: () -> Unit = {},
+    ): UploadPreview
     suspend fun upload(
         confirmation: UploadConfirmation,
         direct: DirectOverwriteConfirmation? = null,
+        checkpoint: () -> Unit = {},
     ): TransferReport
 }
 
@@ -61,15 +72,21 @@ class MirrorGameFileGateway(
     private val parser: CheatFileParser = CheatFileParser(),
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : GameFileGateway {
-    override suspend fun loadEditable(identity: GameIdentity): EditableGameFiles = withContext(dispatcher) {
+    override suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit): EditableGameFiles = withContext(dispatcher) {
         val cheatPath = mirror.cheatPath(identity.titleId, identity.buildId)
         requireRegularFile(cheatPath, "Cheat file")
         val notesPath = mirror.notesPath(identity.titleId, identity.buildId)
         val notesExist = Files.exists(notesPath, LinkOption.NOFOLLOW_LINKS)
         if (notesExist) requireRegularFile(notesPath, "notes.txt")
+        checkpoint()
+        val cheatBytes = Files.readAllBytes(cheatPath)
+        val notesBytes = if (notesExist) {
+            checkpoint()
+            Files.readAllBytes(notesPath)
+        } else null
         EditableGameFiles(
-            cheatText = decodeUtf8(Files.readAllBytes(cheatPath), "Cheat file"),
-            notesText = if (notesExist) decodeUtf8(Files.readAllBytes(notesPath), "notes.txt") else "",
+            cheatText = decodeUtf8(cheatBytes, "Cheat file"),
+            notesText = notesBytes?.let { decodeUtf8(it, "notes.txt") }.orEmpty(),
             notesExist = notesExist,
         )
     }
@@ -78,6 +95,7 @@ class MirrorGameFileGateway(
         identity: GameIdentity,
         cheatText: String,
         notesText: String,
+        checkpoint: () -> Unit,
     ): CheatFile = withContext(dispatcher) {
         val parsed = parser.parse(cheatText)
         parsed.diagnostics.firstOrNull()?.let { diagnostic ->
@@ -85,27 +103,35 @@ class MirrorGameFileGateway(
         }
         val cheatBytes = cheatText.toByteArray(StandardCharsets.UTF_8)
         val notesBytes = notesText.toByteArray(StandardCharsets.UTF_8)
-        mirror.withWriteTransaction {
-            mirror.atomicReplace(mirror.cheatPath(identity.titleId, identity.buildId), cheatBytes)
-            mirror.atomicReplace(mirror.notesPath(identity.titleId, identity.buildId), notesBytes)
-        }
+        checkpoint()
+        mirror.atomicReplaceAll(
+            linkedMapOf(
+                mirror.cheatPath(identity.titleId, identity.buildId) to cheatBytes,
+                mirror.notesPath(identity.titleId, identity.buildId) to notesBytes,
+            ),
+        )
         parsed
     }
 
     override suspend fun inspectZip(bytes: ByteArray): ZipInspection =
         withContext(dispatcher) { zipService.inspect(bytes) }
 
-    override suspend fun importZip(inspection: ZipInspection) {
-        withContext(dispatcher) { zipService.importConfirmed(inspection) }
+    override suspend fun importZip(inspection: ZipInspection, checkpoint: () -> Unit) {
+        withContext(dispatcher) {
+            checkpoint()
+            zipService.importConfirmed(inspection)
+        }
     }
 
-    override suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean): ByteArray =
+    override suspend fun exportZip(identity: GameIdentity, includeEmptyNotes: Boolean, checkpoint: () -> Unit): ByteArray =
         withContext(dispatcher) {
+            checkpoint()
             zipService.export(identity.titleId, identity.buildId, includeEmptyNotes)
         }
 
-    override suspend fun notesExist(identity: GameIdentity): Boolean = withContext(dispatcher) {
+    override suspend fun notesExist(identity: GameIdentity, checkpoint: () -> Unit): Boolean = withContext(dispatcher) {
         val path = mirror.notesPath(identity.titleId, identity.buildId)
+        checkpoint()
         when {
             !Files.exists(path, LinkOption.NOFOLLOW_LINKS) -> false
             Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) ->
@@ -118,19 +144,24 @@ class MirrorGameFileGateway(
         profile: DeviceProfile,
         identity: GameIdentity,
         confirmation: DownloadOverwriteConfirmation?,
-    ): TransferReport = sync.downloadCurrent(profile, identity.titleId, identity.buildId, confirmation)
+        checkpoint: () -> Unit,
+    ): TransferReport = sync.downloadCurrent(profile, identity.titleId, identity.buildId, confirmation, checkpoint)
 
     override suspend fun discardDownload(confirmation: DownloadOverwriteConfirmation) {
         sync.discardDownload(confirmation)
     }
 
-    override suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity): UploadPreview =
-        sync.previewUpload(profile, identity.titleId, identity.buildId)
+    override suspend fun previewUpload(
+        profile: DeviceProfile,
+        identity: GameIdentity,
+        checkpoint: () -> Unit,
+    ): UploadPreview = sync.previewUpload(profile, identity.titleId, identity.buildId, checkpoint)
 
     override suspend fun upload(
         confirmation: UploadConfirmation,
         direct: DirectOverwriteConfirmation?,
-    ): TransferReport = sync.uploadConfirmed(confirmation, direct)
+        checkpoint: () -> Unit,
+    ): TransferReport = sync.uploadConfirmed(confirmation, direct, checkpoint)
 
     private fun requireRegularFile(path: Path, label: String) {
         require(

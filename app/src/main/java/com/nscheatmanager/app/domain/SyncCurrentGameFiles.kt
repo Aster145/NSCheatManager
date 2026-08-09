@@ -121,9 +121,10 @@ class SyncCurrentGameFiles(
         titleId: TitleId,
         buildId: BuildId,
         confirmation: DownloadOverwriteConfirmation? = null,
+        checkpoint: () -> Unit = {},
     ): TransferReport = withContext(dispatcher) {
         operationMutex.withLock {
-            downloadCurrentOnDispatcher(profile, titleId, buildId, confirmation)
+            downloadCurrentOnDispatcher(profile, titleId, buildId, confirmation, checkpoint)
         }
     }
 
@@ -132,6 +133,7 @@ class SyncCurrentGameFiles(
         titleId: TitleId,
         buildId: BuildId,
         confirmation: DownloadOverwriteConfirmation?,
+        checkpoint: () -> Unit,
     ): TransferReport {
         if (confirmation != null) {
             val pending = pendingDownloads.remove(confirmation.id) ?: throw InvalidSyncConfirmation()
@@ -140,6 +142,7 @@ class SyncCurrentGameFiles(
                 throw InvalidSyncConfirmation()
             }
             return try {
+                checkpoint()
                 publishDownload(pending)
             } finally {
                 deleteTree(pending.stageDirectory)
@@ -182,6 +185,7 @@ class SyncCurrentGameFiles(
                 )
             }
             return try {
+                checkpoint()
                 publishDownload(pending)
             } finally {
                 deleteTree(stageDirectory)
@@ -207,8 +211,10 @@ class SyncCurrentGameFiles(
         profile: DeviceProfile,
         titleId: TitleId,
         buildId: BuildId,
+        checkpoint: () -> Unit = {},
     ): UploadPreview = withContext(dispatcher) {
         operationMutex.withLock {
+            checkpoint()
             val snapshot = mirror.withWriteTransaction { captureUploadSnapshot(titleId, buildId) }
             val token = UploadConfirmation(UUID.randomUUID().toString())
             uploadStates[token.id] = UploadState.Previewed(PendingUpload(profile, titleId, buildId, snapshot))
@@ -219,15 +225,17 @@ class SyncCurrentGameFiles(
     suspend fun uploadConfirmed(
         confirmation: UploadConfirmation,
         directOverwriteConfirmation: DirectOverwriteConfirmation? = null,
+        checkpoint: () -> Unit = {},
     ): TransferReport = withContext(dispatcher) {
         operationMutex.withLock {
-            uploadConfirmedOnDispatcher(confirmation, directOverwriteConfirmation)
+            uploadConfirmedOnDispatcher(confirmation, directOverwriteConfirmation, checkpoint)
         }
     }
 
     private suspend fun uploadConfirmedOnDispatcher(
         confirmation: UploadConfirmation,
         directOverwriteConfirmation: DirectOverwriteConfirmation?,
+        checkpoint: () -> Unit,
     ): TransferReport {
         val state = uploadStates[confirmation.id] ?: throw InvalidSyncConfirmation()
         val pending = when (state) {
@@ -254,6 +262,7 @@ class SyncCurrentGameFiles(
         } else {
             DirectOverwriteAuthorization.confirmed()
         }
+        checkpoint()
         return when (val result = ftpFactory(pending.profile).uploadCurrent(
             pending.titleId,
             pending.buildId,

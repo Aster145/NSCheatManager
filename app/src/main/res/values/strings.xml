@@ -92,4 +92,17 @@
     <string name="upload_detail">Upload the current local files? Cheat: %1$d B, notes: %2$d B.</string>
     <string name="direct_upload_warning">The FTP server cannot perform atomic rename. Confirm direct overwrite with recovery handling.</string>
     <string name="empty_notes_share_warning">notes.txt does not exist. Include an empty notes.txt in the shared ZIP?</string>
+    <string name="cheat_state_checked">Checked</string>
+    <string name="cheat_state_unchecked">Not checked</string>
+    <string name="cheat_state_unsupported">Unavailable: unsupported code</string>
+    <string name="message_join">%1$s · %2$s</string>
+    <string name="line_number">Line %1$d</string>
+    <string name="opcode_value">opcode %1$s</string>
+    <string name="diagnostic_unsupported_opcode">Line %1$d · unsupported opcode %2$s</string>
+    <string name="diagnostic_unsupported_form">Line %1$d · unsupported form: %2$s</string>
+    <string name="diagnostic_unsupported_memory_region">Line %1$d · unsupported memory region %2$s</string>
+    <string name="diagnostic_arithmetic_overflow">Line %1$d · arithmetic overflow</string>
+    <string name="diagnostic_instruction_limit">Line %1$d · instruction limit %2$s</string>
+    <string name="diagnostic_io_limit">Line %1$d · I/O limit %2$s bytes</string>
+    <string name="last_executed">Last executed: %1$s</string>
 </resources>
