@@ -1,0 +1,304 @@
+package com.nscheatmanager.app.ui.game
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import com.nscheatmanager.app.R
+import com.nscheatmanager.app.domain.ConnectionState
+import com.nscheatmanager.app.domain.DeviceProfile
+import com.nscheatmanager.app.ui.editor.CheatEditorActions
+import com.nscheatmanager.app.ui.editor.CheatEditorScreen
+import com.nscheatmanager.app.ui.editor.CheatEditorUiState
+
+data class GameScreenActions(
+    val selectDevice: (String) -> Unit,
+    val connectionToggle: () -> Unit,
+    val detachDmnt: () -> Unit,
+    val cheatChecked: (String, Boolean, Boolean) -> Unit,
+    val editModeChanged: (Boolean) -> Unit,
+    val recognize: () -> Unit,
+    val download: () -> Unit,
+    val upload: () -> Unit,
+    val shareZip: () -> Unit,
+    val importZip: () -> Unit,
+    val settings: () -> Unit,
+    val about: () -> Unit,
+) {
+    companion object {
+        val None = GameScreenActions({}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {})
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GameScreen(
+    state: GameUiState,
+    actions: GameScreenActions,
+    modifier: Modifier = Modifier,
+    editorState: CheatEditorUiState = CheatEditorUiState(),
+    editorActions: CheatEditorActions = CheatEditorActions.None,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                actions = {
+                    val label = stringResource(R.string.more_options)
+                    IconButton(
+                        modifier = Modifier.testTag("overflow-menu").semantics { contentDescription = label },
+                        onClick = { menuExpanded = true },
+                    ) { Text("⋮") }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        OrderedMenuItem(0, "menu-edit", state.gameValidated && !state.missingMirror, {
+                            Checkbox(checked = state.editMode || editorState.isOpen, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.edit_mode))
+                        }) {
+                            menuExpanded = false
+                            actions.editModeChanged(!(state.editMode || editorState.isOpen))
+                        }
+                        OrderedMenuItem(1, "menu-recognize", state.connection == ConnectionState.Ready, { Text(stringResource(R.string.recognize_game)) }) {
+                            menuExpanded = false; actions.recognize()
+                        }
+                        OrderedMenuItem(2, "menu-download", state.gameValidated, { Text(stringResource(R.string.download_from_switch)) }) {
+                            menuExpanded = false; actions.download()
+                        }
+                        OrderedMenuItem(3, "menu-upload", state.gameValidated && !state.missingMirror, { Text(stringResource(R.string.upload_to_switch)) }) {
+                            menuExpanded = false; actions.upload()
+                        }
+                        OrderedMenuItem(4, "menu-share-zip", state.gameValidated && !state.missingMirror, { Text(stringResource(R.string.package_share_zip)) }) {
+                            menuExpanded = false; actions.shareZip()
+                        }
+                        OrderedMenuItem(5, "menu-import-zip", state.gameValidated, { Text(stringResource(R.string.import_zip)) }) {
+                            menuExpanded = false; actions.importZip()
+                        }
+                        OrderedMenuItem(6, "menu-settings", true, { Text(stringResource(R.string.settings_title)) }) {
+                            menuExpanded = false; actions.settings()
+                        }
+                        OrderedMenuItem(7, "menu-about", true, { Text(stringResource(R.string.about_title)) }) {
+                            menuExpanded = false; actions.about()
+                        }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier.padding(padding).padding(horizontal = 12.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            DeviceControls(state, actions)
+            if (editorState.isOpen) {
+                CheatEditorScreen(editorState, editorActions)
+            } else {
+                GameIdentityCard(state)
+                CheatGroups(state, actions)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun OrderedMenuItem(
+    order: Int,
+    tag: String,
+    enabled: Boolean = true,
+    text: @Composable () -> Unit,
+    onClick: () -> Unit,
+) {
+    Box(Modifier.testTag("menu-order-$order")) {
+        DropdownMenuItem(modifier = Modifier.testTag(tag), text = text, onClick = onClick, enabled = enabled)
+    }
+}
+
+@Composable
+private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow = maxWidth < 390.dp
+        if (narrow) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ConnectionButton(state, actions, Modifier.weight(1f))
+                    DetachButton(state, actions, Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f))
+                ConnectionButton(state, actions)
+                DetachButton(state, actions)
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceSelector(
+    devices: List<DeviceProfile>,
+    selectedId: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = devices.firstOrNull { it.id == selectedId }
+    Box(modifier) {
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth().testTag("device-selector"),
+            onClick = { expanded = true },
+            enabled = devices.isNotEmpty(),
+        ) {
+            Text(selected?.let { "${it.name} · ${it.host}" } ?: stringResource(R.string.select_device))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            devices.forEach { device ->
+                DropdownMenuItem(
+                    text = { Text("${device.name} · ${device.host}") },
+                    onClick = { expanded = false; onSelect(device.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, modifier: Modifier = Modifier) {
+    Button(
+        modifier = modifier.testTag("connect-toggle"),
+        onClick = actions.connectionToggle,
+        enabled = state.selectedDeviceId != null && !state.busy,
+    ) {
+        Text(
+            stringResource(
+                if (state.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing, ConnectionState.Ready)) {
+                    R.string.disconnect
+                } else {
+                    R.string.connect
+                },
+            ),
+        )
+    }
+}
+
+@Composable
+private fun DetachButton(state: GameUiState, actions: GameScreenActions, modifier: Modifier = Modifier) {
+    OutlinedButton(
+        modifier = modifier.testTag("detach-dmnt"),
+        onClick = actions.detachDmnt,
+        enabled = state.connection == ConnectionState.Ready,
+    ) { Text(stringResource(R.string.detach_dmnt)) }
+}
+
+@Composable
+private fun GameIdentityCard(state: GameUiState) {
+    Card(Modifier.fillMaxWidth().testTag("game-identity")) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.current_game), style = MaterialTheme.typography.titleMedium)
+            IdentityLine("TID", state.titleId)
+            IdentityLine("BID", state.buildId)
+            IdentityLine(stringResource(R.string.main_base), state.mainBase)
+            IdentityLine(stringResource(R.string.heap_base), state.heapBase)
+            state.mirrorPath?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+}
+
+@Composable
+private fun IdentityLine(label: String, value: String?) {
+    Text("$label: ${value ?: "—"}")
+}
+
+@Composable
+private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
+    if (state.missingMirror) {
+        Card(Modifier.fillMaxWidth().testTag("missing-cheat-file")) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.cheat_file_missing))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        modifier = Modifier.testTag("missing-import"),
+                        onClick = actions.importZip,
+                        enabled = state.canImport,
+                    ) { Text(stringResource(R.string.import_zip)) }
+                    OutlinedButton(
+                        modifier = Modifier.testTag("missing-download"),
+                        onClick = actions.download,
+                        enabled = state.canDownload,
+                    ) { Text(stringResource(R.string.download_from_switch)) }
+                }
+            }
+        }
+        return
+    }
+    state.groups.forEachIndexed { index, group ->
+        if (index > 0) HorizontalDivider()
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                modifier = Modifier.testTag("cheat-${group.name}"),
+                checked = group.checked,
+                enabled = group.executable && !group.executing,
+                onCheckedChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
+            )
+            Column(Modifier.weight(1f)) {
+                Text(group.name, style = MaterialTheme.typography.titleSmall)
+                if (!group.executable) {
+                    Text(
+                        group.validationDetail ?: listOfNotNull(
+                            group.unsupportedLine?.let { "Line $it" },
+                            group.unsupportedOpcode?.let { "opcode $it" },
+                        ).joinToString(" · "),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            if (group.executing) CircularProgressIndicator(Modifier.width(24.dp))
+        }
+    }
+}
