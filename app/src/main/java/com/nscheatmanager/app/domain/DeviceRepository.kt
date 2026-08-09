@@ -10,8 +10,12 @@ import com.nscheatmanager.app.data.db.GameSessionEntity
 import com.nscheatmanager.app.data.preferences.AppPreferences
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -35,8 +39,15 @@ class DeviceRepository(
     private val devices = database.deviceProfileDao()
     private val sessions = database.gameSessionDao()
     private val checkedCheats = database.checkedCheatDao()
+    private val activeValidatedSessions = MutableStateFlow<Map<String, GameSessionEntity>>(emptyMap())
 
     fun observeDevices(): Flow<List<DeviceProfile>> = devices.observeAll().map { rows -> rows.map(::toProfile) }
+
+    /** Resolves cross-store selection safely; stale DataStore ids are never exposed as selectable devices. */
+    fun observeSelectedDeviceId(): Flow<String?> =
+        combine(preferences.selectedDeviceId, devices.observeAll()) { selectedDeviceId, rows ->
+            selectedDeviceId?.takeIf { selected -> rows.any { it.id == selected } }
+        }.distinctUntilChanged()
 
     suspend fun addDevice(
         name: String,
@@ -110,6 +121,7 @@ class DeviceRepository(
             true
         }
         if (deleted && selectedDeviceId == deviceId) preferences.clearSelectedDevice()
+        if (deleted) activeValidatedSessions.update { it - deviceId }
     }
 
     suspend fun saveValidatedSession(
@@ -122,22 +134,27 @@ class DeviceRepository(
         TitleId.parse(titleId)
         BuildId.parse(buildId)
         require(devices.findById(deviceId) != null) { "Unknown device" }
-        sessions.upsert(
-            GameSessionEntity(
-                deviceId = deviceId,
-                titleId = titleId.uppercase(),
-                buildId = buildId.uppercase(),
-                mainBase = mainBase,
-                heapBase = heapBase,
-                validated = true,
-                recognizedAtEpochMillis = clockMillis(),
-            ),
+        val trustedSession = GameSessionEntity(
+            deviceId = deviceId,
+            titleId = titleId.uppercase(),
+            buildId = buildId.uppercase(),
+            mainBase = mainBase,
+            heapBase = heapBase,
+            validated = true,
+            recognizedAtEpochMillis = clockMillis(),
         )
+        // Persist identity and display-only bases, but keep connection trust process-local.
+        sessions.upsert(trustedSession.copy(validated = false))
+        activeValidatedSessions.update { it + (deviceId to trustedSession) }
     }
 
-    fun observeSession(deviceId: String): Flow<GameSessionEntity?> = sessions.observeByDevice(deviceId)
+    fun observeSession(deviceId: String): Flow<GameSessionEntity?> =
+        combine(sessions.observeByDevice(deviceId), activeValidatedSessions) { cached, trusted ->
+            trusted[deviceId] ?: cached?.copy(validated = false)
+        }
 
     suspend fun markDeviceDisconnected(deviceId: String) {
+        activeValidatedSessions.update { it - deviceId }
         sessions.invalidate(deviceId)
     }
 

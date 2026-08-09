@@ -16,10 +16,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun checkedCheatDao(): CheckedCheatDao
 
     companion object {
-        fun create(context: Context): AppDatabase =
-            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "nscheatmanager.db")
-                .fallbackToDestructiveMigration(true)
-                .build()
+        fun create(context: Context, name: String = "nscheatmanager.db"): AppDatabase =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name).build()
 
         fun inMemory(context: Context): AppDatabase =
             Room.inMemoryDatabaseBuilder(context.applicationContext, AppDatabase::class.java)

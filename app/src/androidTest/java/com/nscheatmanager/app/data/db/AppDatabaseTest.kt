@@ -1,6 +1,11 @@
 package com.nscheatmanager.app.data.db
 
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nscheatmanager.app.data.preferences.AppPreferences
@@ -9,7 +14,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -20,6 +27,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class AppDatabaseTest {
@@ -28,20 +36,21 @@ class AppDatabaseTest {
     private lateinit var repository: DeviceRepository
     private lateinit var preferenceFile: File
     private lateinit var preferenceScope: CoroutineScope
+    private lateinit var dataStore: DataStore<Preferences>
+    private lateinit var context: Context
 
     @Before
     fun setUp() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context = InstrumentationRegistry.getInstrumentation().targetContext
         database = AppDatabase.inMemory(context)
         preferenceFile = File.createTempFile("nscheat-preferences-", ".preferences_pb", context.cacheDir)
         preferenceFile.delete()
         preferenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        preferences = AppPreferences(
-            PreferenceDataStoreFactory.create(
-                scope = preferenceScope,
-                produceFile = { preferenceFile },
-            ),
+        dataStore = PreferenceDataStoreFactory.create(
+            scope = preferenceScope,
+            produceFile = { preferenceFile },
         )
+        preferences = AppPreferences(dataStore)
         repository = DeviceRepository(database, preferences)
     }
 
@@ -148,6 +157,78 @@ class AppDatabaseTest {
         assertFailsWithIllegalArgument { preferences.setLanguageTag("ja") }
         preferences.clearSelectedDevice()
         assertNull(preferences.selectedDeviceId.first())
+    }
+
+    @Test
+    fun invalidPersistedLanguageFallsBackToChinese() = runBlocking {
+        dataStore.edit { it[stringPreferencesKey("language_tag")] = "ja" }
+
+        assertEquals("zh-CN", preferences.languageTag.first())
+    }
+
+    @Test
+    fun validatedSessionIsTrustedOnlyByTheRepositoryThatRecognizedIt() = runBlocking {
+        val databaseName = "restart-${UUID.randomUUID()}.db"
+        var firstDatabase: AppDatabase? = null
+        var reopenedDatabase: AppDatabase? = null
+        try {
+            firstDatabase = AppDatabase.create(context, databaseName)
+            val firstRepository = DeviceRepository(firstDatabase, preferences)
+            val device = firstRepository.addDevice(name = "Restart test", host = "192.168.1.31")
+            firstRepository.saveValidatedSession(
+                deviceId = device.id,
+                titleId = "0100F2C0115B6000",
+                buildId = "A4A8D3E7F29C81A2",
+                mainBase = "0000007100000000",
+                heapBase = "0000007101000000",
+            )
+            assertTrue(firstRepository.observeSession(device.id).first()?.validated == true)
+            firstDatabase.close()
+            firstDatabase = null
+
+            reopenedDatabase = AppDatabase.create(context, databaseName)
+            val reopenedRepository = DeviceRepository(reopenedDatabase, preferences)
+
+            val reopened = reopenedRepository.observeSession(device.id).first()
+            assertEquals("0000007100000000", reopened?.mainBase)
+            assertFalse(reopened?.validated == true)
+        } finally {
+            firstDatabase?.close()
+            reopenedDatabase?.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun danglingSelectedDeviceIsIgnoredAndCanBeReplaced() = runBlocking {
+        val removed = repository.addDevice(name = "Transient", host = "192.168.1.41")
+        val replacement = repository.addDevice(name = "Replacement", host = "192.168.1.42")
+        repository.selectDevice(removed.id)
+
+        // Simulate a process failure between Room deletion and the best-effort DataStore cleanup.
+        database.deviceProfileDao().delete(removed.id)
+
+        assertNull(repository.observeSelectedDeviceId().first())
+        repository.selectDevice(replacement.id)
+        assertEquals(replacement.id, repository.observeSelectedDeviceId().first())
+    }
+
+    @Test
+    fun concurrentDefaultChangesAcrossRepositoriesLeaveExactlyOneDefault() = runBlocking {
+        val first = repository.addDevice(name = "First", host = "192.168.1.51")
+        val second = repository.addDevice(name = "Second", host = "192.168.1.52")
+        val otherRepository = DeviceRepository(database, preferences)
+
+        coroutineScope {
+            launch(Dispatchers.IO) {
+                repeat(25) { repository.setDefaultDevice(first.id) }
+            }
+            launch(Dispatchers.IO) {
+                repeat(25) { otherRepository.setDefaultDevice(second.id) }
+            }
+        }
+
+        assertEquals(1, repository.observeDevices().first().count { it.isDefault })
     }
 
     private suspend fun assertFailsWithIllegalArgument(block: suspend () -> Unit) {

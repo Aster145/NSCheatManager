@@ -18,7 +18,11 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         .distinctUntilChanged()
 
     val languageTag: Flow<String> = dataStore.data
-        .map { it[LANGUAGE_TAG] ?: CHINESE_LANGUAGE_TAG }
+        .map { preferences ->
+            preferences[LANGUAGE_TAG]
+                ?.takeIf { it in SUPPORTED_LANGUAGE_TAGS }
+                ?: CHINESE_LANGUAGE_TAG
+        }
         .distinctUntilChanged()
 
     suspend fun setSelectedDeviceId(deviceId: String) {
