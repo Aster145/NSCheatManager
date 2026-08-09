@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -30,6 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class AppDatabaseTest {
@@ -264,6 +266,83 @@ class AppDatabaseTest {
         val session = racingRepository.observeSession(device.id).first()
         assertEquals("A4A8D3E7F29C81A2", session?.buildId)
         assertFalse(session?.validated == true)
+    }
+
+    @Test
+    fun startingRecognitionRevokesOldTrustEvenWhenNewSaveIsCancelled() = runBlocking {
+        val hookCalls = AtomicInteger()
+        val secondSaveBlocked = CompletableDeferred<Unit>()
+        val neverReleaseSecondSave = CompletableDeferred<Unit>()
+        val racingRepository = DeviceRepository(
+            database = database,
+            preferences = preferences,
+            beforeSessionPersist = {
+                if (hookCalls.incrementAndGet() == 2) {
+                    secondSaveBlocked.complete(Unit)
+                    neverReleaseSecondSave.await()
+                }
+            },
+        )
+        val device = racingRepository.addDevice(name = "Cancelled", host = "192.168.1.62")
+        racingRepository.saveValidatedSession(
+            deviceId = device.id,
+            titleId = "0100F2C0115B6000",
+            buildId = "A4A8D3E7F29C81A2",
+            mainBase = "0000007100000000",
+            heapBase = "0000007101000000",
+        )
+        assertTrue(racingRepository.observeSession(device.id).first()?.validated == true)
+
+        val replacementSave = async(Dispatchers.IO) {
+            racingRepository.saveValidatedSession(
+                deviceId = device.id,
+                titleId = "0100F2C0115B6000",
+                buildId = "A4A8D3E7F29C81A2",
+                mainBase = "0000007200000000",
+                heapBase = "0000007201000000",
+            )
+        }
+        secondSaveBlocked.await()
+
+        assertFalse(racingRepository.observeSession(device.id).first()?.validated == true)
+        replacementSave.cancelAndJoin()
+        assertFalse(racingRepository.observeSession(device.id).first()?.validated == true)
+    }
+
+    @Test
+    fun failedRecognitionDoesNotRestoreOldTrust() = runBlocking {
+        val hookCalls = AtomicInteger()
+        val failingRepository = DeviceRepository(
+            database = database,
+            preferences = preferences,
+            beforeSessionPersist = {
+                if (hookCalls.incrementAndGet() == 2) error("persistence failed")
+            },
+        )
+        val device = failingRepository.addDevice(name = "Failure", host = "192.168.1.63")
+        failingRepository.saveValidatedSession(
+            deviceId = device.id,
+            titleId = "0100F2C0115B6000",
+            buildId = "A4A8D3E7F29C81A2",
+            mainBase = "0000007100000000",
+            heapBase = "0000007101000000",
+        )
+
+        try {
+            failingRepository.saveValidatedSession(
+                deviceId = device.id,
+                titleId = "0100F2C0115B6000",
+                buildId = "A4A8D3E7F29C81A2",
+                mainBase = "0000007200000000",
+                heapBase = "0000007201000000",
+            )
+            throw AssertionError("Expected failed persistence hook")
+        } catch (_: IllegalStateException) {
+            // Expected: the new recognition failed before it could publish trusted bases.
+        }
+
+        assertFalse(failingRepository.observeSession(device.id).first()?.validated == true)
+        assertEquals("0000007100000000", failingRepository.observeSession(device.id).first()?.mainBase)
     }
 
     private suspend fun assertFailsWithIllegalArgument(block: suspend () -> Unit) {

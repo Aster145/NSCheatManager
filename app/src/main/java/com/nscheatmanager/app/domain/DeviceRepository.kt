@@ -147,7 +147,12 @@ class DeviceRepository(
     ) {
         TitleId.parse(titleId)
         BuildId.parse(buildId)
-        val capturedEpoch = sessionStateMutex.withLock { advanceSessionEpoch(deviceId) }
+        val capturedEpoch = sessionStateMutex.withLock {
+            val epoch = advanceSessionEpoch(deviceId)
+            // Recognition is a validation boundary: old bases become display-only immediately.
+            activeValidatedSessions.update { it - deviceId }
+            epoch
+        }
         require(devices.findById(deviceId) != null) { "Unknown device" }
         val trustedSession = GameSessionEntity(
             deviceId = deviceId,
