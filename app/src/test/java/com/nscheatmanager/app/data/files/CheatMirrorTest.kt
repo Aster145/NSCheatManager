@@ -6,8 +6,14 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeNoException
 import org.junit.Test
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 class CheatMirrorTest {
     private val titleId = TitleId.parse("0100F2C0115B6000")
@@ -62,5 +68,76 @@ class CheatMirrorTest {
         }
 
         assertFalse(Files.exists(outside))
+    }
+
+    @Test
+    fun atomicReplaceRejectsSymlinkedParentWithoutTouchingOutsideSentinel() {
+        val root = Files.createTempDirectory("mirror-parent-link-")
+        val outside = Files.createTempDirectory("mirror-parent-link-outside-")
+        val sentinel = outside.resolve("sentinel.txt")
+        Files.write(sentinel, "outside".toByteArray())
+        try {
+            Files.createSymbolicLink(root.resolve("atmosphere"), outside)
+        } catch (error: Exception) {
+            assumeNoException("Symbolic links are unavailable on this platform", error)
+        }
+        val mirror = CheatMirror(root)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            mirror.atomicReplace(mirror.cheatPath(titleId, buildId), "replacement".toByteArray())
+        }
+
+        assertArrayEquals("outside".toByteArray(), Files.readAllBytes(sentinel))
+        assertFalse(Files.exists(outside.resolve("contents")))
+    }
+
+    @Test
+    fun atomicReplaceRejectsSymlinkTargetWithoutChangingItsReferent() {
+        val root = Files.createTempDirectory("mirror-target-link-")
+        val mirror = CheatMirror(root)
+        val target = mirror.cheatPath(titleId, buildId)
+        Files.createDirectories(target.parent)
+        val outside = Files.createTempFile("mirror-target-outside-", ".txt")
+        Files.write(outside, "outside".toByteArray())
+        try {
+            Files.createSymbolicLink(target, outside)
+        } catch (error: Exception) {
+            assumeNoException("Symbolic links are unavailable on this platform", error)
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            mirror.atomicReplace(target, "replacement".toByteArray())
+        }
+
+        assertArrayEquals("outside".toByteArray(), Files.readAllBytes(outside))
+    }
+
+    @Test
+    fun writeLockIsSharedByMirrorInstancesForTheSameRoot() {
+        val root = Files.createTempDirectory("mirror-shared-lock-")
+        val first = CheatMirror(root)
+        val second = CheatMirror(root)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val holder = executor.submit<Unit> {
+                first.withWriteTransaction {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                }
+            }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val waiter = executor.submit<Unit> { second.atomicReplace(second.cheatPath(titleId, buildId), byteArrayOf(7)) }
+
+            assertThrows(TimeoutException::class.java) { waiter.get(100, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            holder.get(5, TimeUnit.SECONDS)
+            waiter.get(5, TimeUnit.SECONDS)
+            assertArrayEquals(byteArrayOf(7), Files.readAllBytes(second.cheatPath(titleId, buildId)))
+        } finally {
+            release.countDown()
+            executor.shutdownNow()
+        }
     }
 }

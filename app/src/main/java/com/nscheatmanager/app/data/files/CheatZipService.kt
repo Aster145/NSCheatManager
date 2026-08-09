@@ -90,6 +90,10 @@ class CheatZipService internal constructor(
     private val pendingLock = Any()
     private val pendingImports = mutableMapOf<String, PendingImport>()
 
+    init {
+        mirror.withWriteTransaction { recoverPendingTransactionsLocked() }
+    }
+
     fun inspect(archive: ByteArray): ZipInspection =
         inspect(ByteArrayInputStream(archive))
 
@@ -110,46 +114,54 @@ class CheatZipService internal constructor(
             throw ZipImportError("Cheat parse failed at line ${first.line}: ${first.message}")
         }
 
-        val token = UUID.randomUUID().toString()
-        val inspection = ZipInspection(
-            titleId = validated.titleId,
-            buildId = validated.buildId,
-            entries = validated.orderedEntries.map { entry ->
-                ZipInspectionEntry(entry.canonicalPath, entry.bytes.size.toLong())
-            },
-            groupCount = parsed.groups.size,
-            overwriteImpact = OverwriteImpact(
-                cheat = Files.exists(mirror.cheatPath(validated.titleId, validated.buildId)),
-                notes = validated.notes != null &&
-                    Files.exists(mirror.notesPath(validated.titleId, validated.buildId)),
-            ),
-            token = token,
-        )
-        val targetSnapshots = linkedMapOf(
-            mirror.cheatPath(validated.titleId, validated.buildId) to
-                captureSnapshot(mirror.cheatPath(validated.titleId, validated.buildId)),
-        )
-        if (validated.notes != null) {
-            val notesPath = mirror.notesPath(validated.titleId, validated.buildId)
-            targetSnapshots[notesPath] = captureSnapshot(notesPath)
+        return mirror.withWriteTransaction {
+            recoverPendingTransactionsLocked()
+            val token = UUID.randomUUID().toString()
+            val inspection = ZipInspection(
+                titleId = validated.titleId,
+                buildId = validated.buildId,
+                entries = validated.orderedEntries.map { entry ->
+                    ZipInspectionEntry(entry.canonicalPath, entry.bytes.size.toLong())
+                },
+                groupCount = parsed.groups.size,
+                overwriteImpact = OverwriteImpact(
+                    cheat = Files.exists(mirror.cheatPath(validated.titleId, validated.buildId)),
+                    notes = validated.notes != null &&
+                        Files.exists(mirror.notesPath(validated.titleId, validated.buildId)),
+                ),
+                token = token,
+            )
+            val targetSnapshots = linkedMapOf(
+                mirror.cheatPath(validated.titleId, validated.buildId) to
+                    captureSnapshot(mirror.cheatPath(validated.titleId, validated.buildId)),
+            )
+            if (validated.notes != null) {
+                val notesPath = mirror.notesPath(validated.titleId, validated.buildId)
+                targetSnapshots[notesPath] = captureSnapshot(notesPath)
+            }
+            val pending = PendingImport(
+                archiveBytes = archive.copyOf(),
+                digest = sha256(archive),
+                inspection = inspection,
+                targetSnapshots = targetSnapshots,
+            )
+            synchronized(pendingLock) {
+                // The UI supports one confirmation dialog at a time. Invalidating an older preview also
+                // bounds retained attacker-controlled bytes.
+                pendingImports.clear()
+                pendingImports[token] = pending
+            }
+            inspection
         }
-        val pending = PendingImport(
-            archiveBytes = archive.copyOf(),
-            digest = sha256(archive),
-            inspection = inspection,
-            targetSnapshots = targetSnapshots,
-        )
-        synchronized(pendingLock) {
-            // The UI supports one confirmation dialog at a time. Invalidating an older preview also
-            // bounds retained attacker-controlled bytes.
-            pendingImports.clear()
-            pendingImports[token] = pending
-        }
-        return inspection
     }
 
     /** Imports exactly the immutable bytes associated with a previously returned [inspection]. */
     fun importConfirmed(inspection: ZipInspection) {
+        mirror.withWriteTransaction { importConfirmedLocked(inspection) }
+    }
+
+    private fun importConfirmedLocked(inspection: ZipInspection) {
+        recoverPendingTransactionsLocked()
         val pending = synchronized(pendingLock) {
             pendingImports[inspection.token]
                 ?.takeIf { it.inspection === inspection }
@@ -189,7 +201,12 @@ class CheatZipService internal constructor(
                 }
                 staged[destination] = extracted
             }
-            publishTransaction(staged)
+            publishTransaction(
+                extracted = staged,
+                titleId = validated.titleId,
+                buildId = validated.buildId,
+                hasNotes = validated.notes != null,
+            )
         } catch (error: ZipImportError) {
             throw error
         } catch (error: Exception) {
@@ -207,10 +224,11 @@ class CheatZipService internal constructor(
         titleId: TitleId,
         buildId: BuildId,
         includeEmptyNotes: Boolean = false,
-    ): ByteArray {
+    ): ByteArray = mirror.withWriteTransaction {
+        recoverPendingTransactionsLocked()
         val cheat = readExportFile(mirror.cheatPath(titleId, buildId), required = true)
         val notesPath = mirror.notesPath(titleId, buildId)
-        val notes = if (Files.isRegularFile(notesPath)) {
+        val notes = if (Files.exists(notesPath, LinkOption.NOFOLLOW_LINKS)) {
             readExportFile(notesPath, required = true)
         } else {
             if (!includeEmptyNotes) {
@@ -219,7 +237,7 @@ class CheatZipService internal constructor(
             byteArrayOf()
         }
 
-        return try {
+        try {
             ByteArrayOutputStream().use { output ->
                 ZipOutputStream(output).use { zip ->
                     writeDeterministicEntry(zip, mirror.cheatRelative(titleId, buildId), cheat)
@@ -346,10 +364,7 @@ class CheatZipService internal constructor(
                 throw ZipImportError("Truncated ZIP central-directory fields")
             }
             if (nameLength == 0) throw ZipImportError("ZIP entry has an empty name")
-            if (flags and ENCRYPTION_FLAGS != 0) throw ZipImportError("Encrypted ZIP entries are not supported")
-            if (method != ZipEntry.STORED && method != ZipEntry.DEFLATED) {
-                throw ZipImportError("Unsupported ZIP compression method: $method")
-            }
+            validateFlags(method, flags)
             if (compressedSize == UINT_MAX || expandedSize == UINT_MAX || localOffset == UINT_MAX) {
                 throw ZipImportError("ZIP64 or unknown entry sizes are not supported")
             }
@@ -363,8 +378,9 @@ class CheatZipService internal constructor(
             if (diskStart != 0) throw ZipImportError("Multi-disk ZIP entries are not supported")
 
             val rawName = archive.ascii(cursor + CENTRAL_FIXED_SIZE, nameLength)
+            validateExtraFields(archive, cursor + CENTRAL_FIXED_SIZE + nameLength, extraLength)
             validateExternalType(creatorSystem, externalAttributes, rawName)
-            validateLocalHeader(
+            val localEnd = validateLocalHeader(
                 archive = archive,
                 centralOffset = centralOffset,
                 rawName = rawName,
@@ -383,10 +399,23 @@ class CheatZipService internal constructor(
                 compressedSize = compressedSize,
                 expandedSize = expandedSize,
                 localOffset = localOffset,
+                localEnd = localEnd,
             )
             cursor += CENTRAL_FIXED_SIZE + variableLength.toInt()
         }
         if (cursor != eocd) throw ZipImportError("ZIP central-directory size does not match its entries")
+        val localOrder = result.sortedBy(CentralEntry::localOffset)
+        if (localOrder.isNotEmpty() && localOrder.first().localOffset != 0L) {
+            throw ZipImportError("ZIP local entries must begin at the archive start")
+        }
+        localOrder.zipWithNext().forEach { (current, next) ->
+            if (current.localEnd != next.localOffset) {
+                throw ZipImportError("ZIP local entries overlap or contain unbound bytes")
+            }
+        }
+        if (localOrder.isNotEmpty() && localOrder.last().localEnd != centralOffset) {
+            throw ZipImportError("ZIP has unbound bytes before its central directory")
+        }
         return result
     }
 
@@ -400,7 +429,7 @@ class CheatZipService internal constructor(
         compressedSize: Long,
         expandedSize: Long,
         localOffset: Long,
-    ) {
+    ): Long {
         if (localOffset > Int.MAX_VALUE) throw ZipImportError("ZIP local-header offset is invalid")
         val offset = localOffset.toInt()
         archive.requireRange(offset, LOCAL_FIXED_SIZE)
@@ -417,16 +446,69 @@ class CheatZipService internal constructor(
         if (localName != rawName || localMethod != method || localFlags != flags) {
             throw ZipImportError("ZIP local and central entry metadata disagree")
         }
-        if (localFlags and ENCRYPTION_FLAGS != 0) throw ZipImportError("Encrypted ZIP entries are not supported")
+        validateFlags(localMethod, localFlags)
+        validateExtraFields(archive, offset + LOCAL_FIXED_SIZE + nameLength, extraLength)
         val usesDescriptor = localFlags and DATA_DESCRIPTOR_FLAG != 0
         if (!usesDescriptor &&
             (localCrc != crc || localCompressed != compressedSize || localExpanded != expandedSize)
         ) {
             throw ZipImportError("ZIP local and central entry sizes disagree")
         }
+        if (usesDescriptor &&
+            ((localCrc != 0L && localCrc != crc) ||
+                (localCompressed != 0L && localCompressed != compressedSize) ||
+                (localExpanded != 0L && localExpanded != expandedSize))
+        ) {
+            throw ZipImportError("ZIP descriptor entry has contradictory local CRC or sizes")
+        }
         val dataStart = offset.toLong() + LOCAL_FIXED_SIZE + nameLength + extraLength
         if (dataStart + compressedSize > centralOffset) {
             throw ZipImportError("ZIP entry data overlaps the central directory")
+        }
+        val dataEnd = dataStart + compressedSize
+        if (!usesDescriptor) return dataEnd
+        if (method != ZipEntry.DEFLATED) {
+            throw ZipImportError("Data descriptors are supported only for DEFLATED entries")
+        }
+        if (dataEnd > Int.MAX_VALUE) throw ZipImportError("ZIP descriptor offset is invalid")
+        var descriptorOffset = dataEnd.toInt()
+        val hasSignature = archive.u32(descriptorOffset) == DATA_DESCRIPTOR_SIGNATURE
+        if (hasSignature) descriptorOffset += 4
+        archive.requireRange(descriptorOffset, DATA_DESCRIPTOR_BODY_SIZE)
+        val descriptorCrc = archive.u32(descriptorOffset)
+        val descriptorCompressed = archive.u32(descriptorOffset + 4)
+        val descriptorExpanded = archive.u32(descriptorOffset + 8)
+        if (descriptorCrc != crc ||
+            descriptorCompressed != compressedSize ||
+            descriptorExpanded != expandedSize
+        ) {
+            throw ZipImportError("ZIP data descriptor disagrees with central metadata")
+        }
+        return descriptorOffset.toLong() + DATA_DESCRIPTOR_BODY_SIZE
+    }
+
+    private fun validateFlags(method: Int, flags: Int) {
+        if (method != ZipEntry.STORED && method != ZipEntry.DEFLATED) {
+            throw ZipImportError("Unsupported ZIP compression method: $method")
+        }
+        val allowed = UTF8_FLAG or if (method == ZipEntry.DEFLATED) DATA_DESCRIPTOR_FLAG else 0
+        if (flags and allowed.inv() != 0) {
+            throw ZipImportError("ZIP entry uses unsupported or security-sensitive flags")
+        }
+    }
+
+    private fun validateExtraFields(archive: ByteArray, offset: Int, length: Int) {
+        var cursor = offset
+        val end = offset + length
+        archive.requireRange(offset, length)
+        while (cursor < end) {
+            if (end - cursor < 4) throw ZipImportError("Malformed ZIP extra field")
+            val id = archive.u16(cursor)
+            val fieldLength = archive.u16(cursor + 2)
+            cursor += 4
+            if (cursor + fieldLength > end) throw ZipImportError("Malformed ZIP extra field length")
+            if (id == ZIP64_EXTRA_ID) throw ZipImportError("ZIP64 extra fields are not supported")
+            cursor += fieldLength
         }
     }
 
@@ -549,78 +631,314 @@ class CheatZipService internal constructor(
         throw ZipImportError("$label is not valid UTF-8", error)
     }
 
-    private fun publishTransaction(extracted: LinkedHashMap<Path, Path>) {
+    private fun publishTransaction(
+        extracted: LinkedHashMap<Path, Path>,
+        titleId: TitleId,
+        buildId: BuildId,
+        hasNotes: Boolean,
+    ) {
         val transactionId = UUID.randomUUID().toString()
-        val stages = linkedMapOf<Path, Path>()
-        val backups = linkedMapOf<Path, Path>()
-        val committed = mutableListOf<Path>()
-        val createdDirectories = mutableListOf<Path>()
-        var published = false
+        var journal = TransactionJournal(
+            transactionId = transactionId,
+            phase = TransactionPhase.INIT,
+            titleId = titleId,
+            buildId = buildId,
+            hasNotes = hasNotes,
+            oldCheat = Files.exists(mirror.cheatPath(titleId, buildId), LinkOption.NOFOLLOW_LINKS),
+            oldNotes = hasNotes && Files.exists(mirror.notesPath(titleId, buildId), LinkOption.NOFOLLOW_LINKS),
+        )
+        val journalPath = transactionJournalPath(transactionId)
+        var journalWritten = false
 
         try {
-            extracted.forEach { (rawTarget, extractedFile) ->
-                val target = mirror.requireInsideRoot(rawTarget)
-                val parent = requireNotNull(target.parent)
-                createDirectoriesTracked(parent, createdDirectories)
-                val stage = parent.resolve(".${target.fileName}.stage-$transactionId")
-                writeCompleteFile(stage, Files.readAllBytes(extractedFile))
-                stages[target] = stage
-            }
+            transactionEntries(journal).forEach { entry -> mirror.requireRegularOrMissing(entry.target) }
+            persistJournal(journal)
+            journalWritten = true
 
-            stages.keys.forEach { target ->
-                if (Files.exists(target)) {
-                    val backup = target.parent.resolve(".${target.fileName}.backup-$transactionId")
-                    fileOps.moveReplacing(target, backup)
-                    backups[target] = backup
+            transactionEntries(journal).forEach { entry ->
+                val extractedFile = extracted[entry.target]
+                    ?: throw ZipImportError("Imported transaction is missing a staged entry")
+                mirror.createDirectoriesSecure(requireNotNull(entry.stage.parent))
+                writeCompleteFile(entry.stage, Files.readAllBytes(extractedFile))
+            }
+            journal = journal.copy(phase = TransactionPhase.STAGED)
+            persistJournal(journal)
+
+            transactionEntries(journal).forEach { entry ->
+                if (entry.oldExisted) {
+                    fileOps.moveReplacing(entry.target, entry.backup)
                 }
             }
+            forceTransactionParents(journal)
+            journal = journal.copy(phase = TransactionPhase.BACKED_UP)
+            persistJournal(journal)
 
-            stages.forEach { (target, stage) ->
-                fileOps.moveReplacing(stage, target)
-                committed.add(target)
+            transactionEntries(journal).forEach { entry ->
+                fileOps.moveReplacing(entry.stage, entry.target)
             }
-            published = true
+            forceTransactionParents(journal)
+            journal = journal.copy(phase = TransactionPhase.PUBLISHED)
+            persistJournal(journal)
+            finishPublishedTransaction(journal, journalPath)
         } catch (failure: Exception) {
-            val rollbackFailures = mutableListOf<Throwable>()
-            committed.asReversed().forEach { target ->
+            if (journalWritten) {
                 try {
-                    Files.deleteIfExists(target)
+                    recoverJournal(journalPath)
                 } catch (error: Throwable) {
-                    rollbackFailures += error
+                    failure.addSuppressed(error)
                 }
             }
-            backups.entries.toList().asReversed().forEach { (target, backup) ->
-                try {
-                    if (Files.exists(backup)) fileOps.moveReplacing(backup, target)
-                } catch (error: Throwable) {
-                    rollbackFailures += error
+            throw ZipImportError("Atomic mirror replacement failed; recovery was attempted", failure)
+        }
+    }
+
+    private fun recoverPendingTransactionsLocked() {
+        val journalDirectory = mirror.root.resolve(TRANSACTION_DIRECTORY)
+        if (!Files.exists(journalDirectory, LinkOption.NOFOLLOW_LINKS)) return
+        mirror.validateNoSymlinkComponents(journalDirectory)
+        if (!Files.isDirectory(journalDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            throw ZipImportError("Transaction journal location is not a directory")
+        }
+        val journals = mutableListOf<Path>()
+        val directoryEntries = mutableListOf<Path>()
+        Files.list(journalDirectory).use { paths -> paths.forEach(directoryEntries::add) }
+        directoryEntries.sorted().forEach { path ->
+            val name = path.fileName.toString()
+            if (JOURNAL_TEMP_NAME.matches(name)) {
+                deleteRegularOrMissing(path)
+                return@forEach
+            }
+            if (Files.isSymbolicLink(path) ||
+                !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) ||
+                !name.endsWith(JOURNAL_SUFFIX)
+            ) {
+                throw ZipImportError("Transaction journal directory contains an unsupported entry")
+            }
+            journals.add(path)
+        }
+        journals.forEach(::recoverJournal)
+        deleteEmptyDirectory(journalDirectory)
+    }
+
+    private fun recoverJournal(journalPath: Path) {
+        val journal = readJournal(journalPath)
+        when (journal.phase) {
+            TransactionPhase.PUBLISHED -> {
+                val entries = transactionEntries(journal)
+                val canFinishNew = entries.all { entry ->
+                    isRegularNoLinks(entry.target) || isRegularNoLinks(entry.stage)
+                }
+                if (canFinishNew) {
+                    finishPublishedTransaction(journal, journalPath)
+                } else {
+                    restoreOldTransaction(journal, journalPath)
                 }
             }
-            rollbackFailures.forEach(failure::addSuppressed)
-            throw ZipImportError("Atomic mirror replacement failed and was rolled back", failure)
-        } finally {
-            stages.values.forEach { runCatching { Files.deleteIfExists(it) } }
-            if (published) {
-                backups.values.forEach { runCatching { Files.deleteIfExists(it) } }
+
+            TransactionPhase.INIT,
+            TransactionPhase.STAGED,
+            TransactionPhase.BACKED_UP,
+            -> restoreOldTransaction(journal, journalPath)
+        }
+    }
+
+    private fun restoreOldTransaction(journal: TransactionJournal, journalPath: Path) {
+        transactionEntries(journal).forEach { entry ->
+            mirror.validateNoSymlinkComponents(requireNotNull(entry.target.parent))
+            if (entry.oldExisted) {
+                if (isRegularNoLinks(entry.backup)) {
+                    deleteRegularOrMissing(entry.target)
+                    fileOps.moveReplacing(entry.backup, entry.target)
+                } else if (!isRegularNoLinks(entry.target)) {
+                    throw ZipImportError("Cannot restore an old mirror file from its transaction journal")
+                }
             } else {
-                createdDirectories.asReversed().forEach { runCatching { Files.deleteIfExists(it) } }
+                deleteRegularOrMissing(entry.target)
+            }
+            deleteRegularOrMissing(entry.stage)
+            deleteRegularOrMissing(entry.backup)
+        }
+        forceTransactionParents(journal)
+        deleteJournal(journalPath)
+        cleanupEmptyTransactionDirectories(journal)
+    }
+
+    private fun finishPublishedTransaction(journal: TransactionJournal, journalPath: Path) {
+        transactionEntries(journal).forEach { entry ->
+            mirror.validateNoSymlinkComponents(requireNotNull(entry.target.parent))
+            if (!isRegularNoLinks(entry.target)) {
+                if (!isRegularNoLinks(entry.stage)) {
+                    throw ZipImportError("Published transaction is missing its new mirror file")
+                }
+                fileOps.moveReplacing(entry.stage, entry.target)
+            }
+            deleteRegularOrMissing(entry.stage)
+            deleteRegularOrMissing(entry.backup)
+        }
+        forceTransactionParents(journal)
+        deleteJournal(journalPath)
+        cleanupEmptyTransactionDirectories(journal)
+    }
+
+    private fun persistJournal(journal: TransactionJournal) {
+        val directory = mirror.root.resolve(TRANSACTION_DIRECTORY)
+        mirror.createDirectoriesSecure(directory)
+        val destination = transactionJournalPath(journal.transactionId)
+        val temporary = directory.resolve(".${journal.transactionId}.journal.tmp-${UUID.randomUUID()}")
+        try {
+            writeCompleteFile(temporary, journal.serialize().toByteArray(StandardCharsets.UTF_8))
+            mirror.moveReplacing(temporary, destination)
+            forceDirectory(directory)
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
+    private fun readJournal(path: Path): TransactionJournal {
+        val canonical = mirror.requireInsideRoot(path)
+        mirror.validateNoSymlinkComponents(requireNotNull(canonical.parent))
+        if (!Files.isRegularFile(canonical, LinkOption.NOFOLLOW_LINKS) || Files.size(canonical) > MAX_JOURNAL_BYTES) {
+            throw ZipImportError("Transaction journal is missing, linked, or oversized")
+        }
+        val fileName = canonical.fileName.toString()
+        if (!fileName.endsWith(JOURNAL_SUFFIX)) throw ZipImportError("Invalid transaction journal name")
+        val transactionId = fileName.removeSuffix(JOURNAL_SUFFIX)
+        val parsedUuid = try {
+            UUID.fromString(transactionId)
+        } catch (error: IllegalArgumentException) {
+            throw ZipImportError("Invalid transaction journal identifier", error)
+        }
+        if (parsedUuid.toString() != transactionId) throw ZipImportError("Non-canonical transaction identifier")
+
+        val text = decodeUtf8(Files.readAllBytes(canonical), "transaction journal")
+        val fields = linkedMapOf<String, String>()
+        text.split('\n').filter(String::isNotEmpty).forEach { line ->
+            val separator = line.indexOf('=')
+            if (separator <= 0) throw ZipImportError("Malformed transaction journal field")
+            val key = line.substring(0, separator)
+            val value = line.substring(separator + 1)
+            if (fields.put(key, value) != null) throw ZipImportError("Duplicate transaction journal field")
+        }
+        if (fields.keys != JOURNAL_KEYS) throw ZipImportError("Transaction journal fields are incomplete or unknown")
+        if (fields.getValue("version") != JOURNAL_VERSION) throw ZipImportError("Unsupported transaction journal version")
+        if (fields.getValue("transactionId") != transactionId) throw ZipImportError("Journal filename and identifier disagree")
+        val titleId = try {
+            TitleId.parse(fields.getValue("titleId"))
+        } catch (error: IllegalArgumentException) {
+            throw ZipImportError("Invalid journal Title ID", error)
+        }
+        val buildId = try {
+            BuildId.parse(fields.getValue("buildId"))
+        } catch (error: IllegalArgumentException) {
+            throw ZipImportError("Invalid journal Build ID", error)
+        }
+        return TransactionJournal(
+            transactionId = transactionId,
+            phase = try {
+                TransactionPhase.valueOf(fields.getValue("phase"))
+            } catch (error: IllegalArgumentException) {
+                throw ZipImportError("Invalid transaction journal phase", error)
+            },
+            titleId = titleId,
+            buildId = buildId,
+            hasNotes = parseJournalBoolean(fields.getValue("hasNotes")),
+            oldCheat = parseJournalBoolean(fields.getValue("oldCheat")),
+            oldNotes = parseJournalBoolean(fields.getValue("oldNotes")),
+        ).also { journal ->
+            if (!journal.hasNotes && journal.oldNotes) {
+                throw ZipImportError("Journal cannot retain notes outside its transaction")
             }
         }
     }
 
-    private fun createDirectoriesTracked(directory: Path, created: MutableList<Path>) {
-        val missing = mutableListOf<Path>()
-        var cursor: Path? = directory
-        while (cursor != null && !Files.exists(cursor, LinkOption.NOFOLLOW_LINKS)) {
-            missing.add(cursor)
-            cursor = cursor.parent
+    private fun transactionEntries(journal: TransactionJournal): List<TransactionEntry> {
+        fun entry(target: Path, oldExisted: Boolean): TransactionEntry = TransactionEntry(
+            target = mirror.requireInsideRoot(target),
+            stage = mirror.requireInsideRoot(
+                target.parent.resolve(".${target.fileName}.stage-${journal.transactionId}"),
+            ),
+            backup = mirror.requireInsideRoot(
+                target.parent.resolve(".${target.fileName}.backup-${journal.transactionId}"),
+            ),
+            oldExisted = oldExisted,
+        )
+        return buildList {
+            add(entry(mirror.cheatPath(journal.titleId, journal.buildId), journal.oldCheat))
+            if (journal.hasNotes) {
+                add(entry(mirror.notesPath(journal.titleId, journal.buildId), journal.oldNotes))
+            }
         }
-        Files.createDirectories(directory)
-        created.addAll(missing.asReversed())
+    }
+
+    private fun transactionJournalPath(transactionId: String): Path =
+        mirror.requireInsideRoot(mirror.root.resolve(TRANSACTION_DIRECTORY).resolve("$transactionId$JOURNAL_SUFFIX"))
+
+    private fun deleteJournal(path: Path) {
+        deleteRegularOrMissing(path)
+        forceDirectory(requireNotNull(path.parent))
+    }
+
+    private fun deleteRegularOrMissing(path: Path) {
+        mirror.validateNoSymlinkComponents(requireNotNull(path.parent))
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return
+        if (Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw ZipImportError("Transaction artifact is not a regular file")
+        }
+        Files.delete(path)
+    }
+
+    private fun isRegularNoLinks(path: Path): Boolean =
+        Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)
+
+    private fun forceTransactionParents(journal: TransactionJournal) {
+        transactionEntries(journal).mapNotNull { it.target.parent }.distinct().forEach(::forceDirectory)
+    }
+
+    private fun forceDirectory(directory: Path) {
+        runCatching {
+            FileChannel.open(directory, StandardOpenOption.READ).use { channel -> channel.force(true) }
+        }
+    }
+
+    private fun cleanupEmptyTransactionDirectories(journal: TransactionJournal) {
+        val candidates = mutableSetOf<Path>()
+        transactionEntries(journal).forEach { entry ->
+            var cursor: Path? = entry.target.parent
+            while (cursor != null && cursor != mirror.root) {
+                candidates.add(cursor)
+                cursor = cursor.parent
+            }
+        }
+        candidates.sortedByDescending { it.nameCount }.forEach(::deleteEmptyDirectory)
+        deleteEmptyDirectory(mirror.root.resolve(TRANSACTION_DIRECTORY))
+    }
+
+    private fun deleteEmptyDirectory(directory: Path) {
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return
+        mirror.validateNoSymlinkComponents(directory)
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw ZipImportError("Expected a transaction directory")
+        }
+        try {
+            Files.delete(directory)
+        } catch (_: java.nio.file.DirectoryNotEmptyException) {
+            // Shared game or journal directories remain in use.
+        }
+    }
+
+    private fun parseJournalBoolean(value: String): Boolean = when (value) {
+        "true" -> true
+        "false" -> false
+        else -> throw ZipImportError("Invalid transaction journal boolean")
     }
 
     private fun readExportFile(path: Path, required: Boolean): ByteArray {
-        if (!Files.isRegularFile(path)) {
+        try {
+            mirror.validateNoSymlinkComponents(requireNotNull(path.parent))
+        } catch (error: IllegalArgumentException) {
+            throw ZipExportError("Export path contains an unsafe link or parent", error)
+        }
+        if (Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
             if (required) throw ZipExportError("Required cheat export file is missing")
             return byteArrayOf()
         }
@@ -684,6 +1002,11 @@ class CheatZipService internal constructor(
         MessageDigest.getInstance("SHA-256").digest(bytes)
 
     private fun captureSnapshot(path: Path): FileSnapshot {
+        try {
+            mirror.validateNoSymlinkComponents(requireNotNull(path.parent))
+        } catch (error: IllegalArgumentException) {
+            throw ZipImportError("Existing mirror path contains an unsafe link or parent", error)
+        }
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return FileSnapshot.Missing
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
             throw ZipImportError("Existing mirror target is not a regular file")
@@ -711,6 +1034,36 @@ class CheatZipService internal constructor(
         val targetSnapshots: Map<Path, FileSnapshot>,
     )
 
+    private data class TransactionJournal(
+        val transactionId: String,
+        val phase: TransactionPhase,
+        val titleId: TitleId,
+        val buildId: BuildId,
+        val hasNotes: Boolean,
+        val oldCheat: Boolean,
+        val oldNotes: Boolean,
+    ) {
+        fun serialize(): String = buildString {
+            append("version=").append(JOURNAL_VERSION).append('\n')
+            append("transactionId=").append(transactionId).append('\n')
+            append("phase=").append(phase.name).append('\n')
+            append("titleId=").append(titleId.hex).append('\n')
+            append("buildId=").append(buildId.hex).append('\n')
+            append("hasNotes=").append(hasNotes).append('\n')
+            append("oldCheat=").append(oldCheat).append('\n')
+            append("oldNotes=").append(oldNotes).append('\n')
+        }
+    }
+
+    private data class TransactionEntry(
+        val target: Path,
+        val stage: Path,
+        val backup: Path,
+        val oldExisted: Boolean,
+    )
+
+    private enum class TransactionPhase { INIT, STAGED, BACKED_UP, PUBLISHED }
+
     private sealed interface FileSnapshot {
         data object Missing : FileSnapshot
 
@@ -730,6 +1083,7 @@ class CheatZipService internal constructor(
         val compressedSize: Long,
         val expandedSize: Long,
         val localOffset: Long,
+        val localEnd: Long,
         val candidate: PathCandidate? = null,
     )
 
@@ -764,17 +1118,39 @@ class CheatZipService internal constructor(
         const val CENTRAL_FIXED_SIZE = 46
         const val LOCAL_FIXED_SIZE = 30
         const val MAX_ZIP_COMMENT = 65_535
-        const val ENCRYPTION_FLAGS = 0x0041
         const val DATA_DESCRIPTOR_FLAG = 0x0008
+        const val UTF8_FLAG = 0x0800
+        const val ZIP64_EXTRA_ID = 0x0001
+        const val DATA_DESCRIPTOR_BODY_SIZE = 12
+        const val TRANSACTION_DIRECTORY = ".transactions"
+        const val JOURNAL_SUFFIX = ".journal"
+        const val JOURNAL_VERSION = "1"
+        const val MAX_JOURNAL_BYTES = 4_096L
         const val UNIX_CREATOR = 3
         const val UNIX_FILE_TYPE_MASK = 0xF000
         const val UNIX_REGULAR_FILE = 0x8000
         const val UNIX_SYMLINK = 0xA000
-        const val FIXED_ZIP_TIME_MILLIS = 0L
+        const val FIXED_ZIP_TIME_MILLIS = 315_532_800_000L
         const val UINT_MAX = 0xFFFF_FFFFL
         const val EOCD_SIGNATURE = 0x06054B50L
         const val CENTRAL_SIGNATURE = 0x02014B50L
         const val LOCAL_SIGNATURE = 0x04034B50L
+        const val DATA_DESCRIPTOR_SIGNATURE = 0x08074B50L
+
+        val JOURNAL_KEYS = linkedSetOf(
+            "version",
+            "transactionId",
+            "phase",
+            "titleId",
+            "buildId",
+            "hasNotes",
+            "oldCheat",
+            "oldNotes",
+        )
+        val JOURNAL_TEMP_NAME = Regex(
+            "^\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" +
+                "\\.journal\\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        )
 
         val CheatPath = Regex(
             "atmosphere/contents/([0-9A-Fa-f]{16})/cheats/([0-9A-Fa-f]{16})\\.txt",
