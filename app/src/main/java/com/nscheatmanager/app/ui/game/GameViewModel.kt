@@ -39,6 +39,10 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import com.nscheatmanager.app.ui.common.ErrorContext
+import com.nscheatmanager.app.ui.common.ErrorMapper
+import com.nscheatmanager.app.ui.common.NetworkEndpoint
+import com.nscheatmanager.app.ui.common.UserMessage
 import kotlinx.coroutines.runBlocking
 
 data class CheatGroupUiState(
@@ -154,6 +158,7 @@ sealed interface GameEffect {
         val sourceLine: Int? = null,
         val diagnostic: CheatDiagnosticUiState? = null,
     ) : GameEffect
+    data class UserError(val message: UserMessage) : GameEffect
 }
 
 interface GameDeviceStore {
@@ -678,7 +683,14 @@ class GameViewModel private constructor(
     private fun readyIdentity(): GameIdentity? = sessionState.game?.takeIf { sessionState.gameValidated }
 
     private fun showFailure(error: Throwable) {
-        effectChannel.trySend(GameEffect.Message(GameMessage.OPERATION_FAILED, error.message))
+        val device = selectedProfile()
+        ErrorMapper.map(
+            error,
+            ErrorContext(
+                operation = "game",
+                endpoint = device?.let { NetworkEndpoint(it.host, it.sysBotPort) },
+            ),
+        )?.let { effectChannel.trySend(GameEffect.UserError(it)) }
     }
 
     private fun setConfirmation(create: (Long) -> GameConfirmation) {

@@ -30,6 +30,10 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
+import com.nscheatmanager.app.ui.common.ErrorContext
+import com.nscheatmanager.app.ui.common.ErrorMapper
+import com.nscheatmanager.app.ui.common.UserMessage
 
 enum class EditorTab { Cheat, Notes }
 
@@ -54,7 +58,7 @@ data class PendingEditorDiscard(val id: Long, val route: String?)
 
 sealed interface EditorEffect {
     data class Saved(val identity: GameIdentity, val file: CheatFile) : EditorEffect
-    data class Error(val detail: String?) : EditorEffect
+    data class Error(val message: UserMessage) : EditorEffect
 }
 
 class CheatEditorViewModel(
@@ -136,7 +140,7 @@ class CheatEditorViewModel(
                     if (generation != loadGeneration || mutableUiState.value.identity != identity) return@onFailure
                     mutableUiState.value = CheatEditorUiState()
                     scheduleDraftPersistence()
-                    effectChannel.trySend(EditorEffect.Error(it.message))
+                    reportError(it, "editor_load")
                 }
         }
     }
@@ -195,7 +199,7 @@ class CheatEditorViewModel(
                             effectChannel.trySend(EditorEffect.Saved(identity, saved))
                         } else {
                             mutableUiState.update { it.copy(isSaving = false) }
-                            effectChannel.trySend(EditorEffect.Error("Editor draft flush timed out"))
+                            reportError(com.nscheatmanager.app.protocol.ProtocolError.Timeout("editor_flush", java.io.IOException()), "editor_flush")
                         }
                     }
             } catch (error: Throwable) {
@@ -210,7 +214,7 @@ class CheatEditorViewModel(
                 } else {
                     mutableUiState.update { it.copy(isSaving = false) }
                     scheduleDraftPersistence()
-                    effectChannel.trySend(EditorEffect.Error(error.message))
+                    reportError(error, "editor_save")
                 }
             }
         }
@@ -262,7 +266,7 @@ class CheatEditorViewModel(
                 true
             } ?: false
         }.getOrElse {
-            effectChannel.trySend(EditorEffect.Error(it.message))
+            reportError(it, "editor_flush")
             false
         }
 
@@ -288,11 +292,16 @@ class CheatEditorViewModel(
                 true
             } ?: false
         }.getOrElse {
-            effectChannel.trySend(EditorEffect.Error(it.message))
+            reportError(it, "editor_close")
             false
         }
         if (!completed) closing = false
         return completed
+    }
+
+    private fun reportError(error: Throwable, operation: String) {
+        if (error is CancellationException) throw error
+        ErrorMapper.map(error, ErrorContext(operation))?.let { effectChannel.trySend(EditorEffect.Error(it)) }
     }
 
     private suspend fun persistLatestDraftLocked() {

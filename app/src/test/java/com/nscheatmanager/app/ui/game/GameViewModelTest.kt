@@ -22,7 +22,9 @@ import com.nscheatmanager.app.domain.TransferReport
 import com.nscheatmanager.app.domain.UploadConfirmation
 import com.nscheatmanager.app.domain.UploadPreview
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
+import com.nscheatmanager.app.protocol.ProtocolError
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -485,6 +487,17 @@ class GameViewModelTest {
             uploadCalls++
             return uploadReports.removeFirst()
         }
+    }
+
+    @Test
+    fun transportFailureUsesCentralMessageAndNeverExposesExceptionText() = runTest(dispatcher) {
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), FakeSessionGateway(), FakeGameFileGateway())
+        val effect = async(start = CoroutineStart.UNDISPATCHED) { viewModel.effects.first() }
+        viewModel.onExternalFailure(ProtocolError.MalformedResponse("SECRET_PAYLOAD"))
+
+        val message = effect.await() as GameEffect.UserError
+        assertEquals(com.nscheatmanager.app.R.string.error_malformed_response, message.message.messageRes)
+        assertFalse(message.message.detail.toString().contains("SECRET_PAYLOAD"))
     }
 
     private companion object {

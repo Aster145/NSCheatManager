@@ -43,6 +43,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.domain.ConnectionState
@@ -94,8 +97,8 @@ fun GameScreen(
                         onClick = { menuExpanded = true },
                     ) { Text("⋮") }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        OrderedMenuItem(0, "menu-edit", state.gameValidated && !state.missingMirror, {
-                            Checkbox(checked = state.editMode || editorState.isOpen, onCheckedChange = null)
+                        ToggleOrderedMenuItem(0, "menu-edit", state.gameValidated && !state.missingMirror, state.editMode || editorState.isOpen, text = {
+                            Checkbox(modifier = Modifier.clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.edit_mode))
                         }) {
@@ -154,6 +157,28 @@ private fun OrderedMenuItem(
 ) {
     Box(Modifier.testTag("menu-order-$order")) {
         DropdownMenuItem(modifier = Modifier.testTag(tag), text = text, onClick = onClick, enabled = enabled)
+    }
+}
+
+@Composable
+private fun ToggleOrderedMenuItem(
+    order: Int,
+    tag: String,
+    enabled: Boolean,
+    checked: Boolean,
+    text: @Composable () -> Unit,
+    onClick: () -> Unit,
+) {
+    Box(Modifier.testTag("menu-order-$order")) {
+        DropdownMenuItem(
+            modifier = Modifier.testTag(tag).semantics {
+                role = Role.Checkbox
+                toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
+            },
+            text = text,
+            onClick = onClick,
+            enabled = enabled,
+        )
     }
 }
 

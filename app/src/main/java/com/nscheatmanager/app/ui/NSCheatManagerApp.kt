@@ -125,7 +125,6 @@ fun NSCheatManagerApp(
     val context = LocalContext.current
     val resources = LocalResources.current
     val shareChooserTitle = stringResource(R.string.package_share_zip)
-    val operationFailedLabel = stringResource(R.string.operation_failed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
@@ -146,6 +145,7 @@ fun NSCheatManagerApp(
                     context.startActivity(Intent.createChooser(intent, shareChooserTitle))
                 }.onFailure(gameEffectActions.externalFailure)
                 is GameEffect.Message -> snackbar.showSnackbar(resources.localizedGameMessage(effect))
+                is GameEffect.UserError -> snackbar.showSnackbar(resources.localizedUserMessage(effect.message))
             }
         }
     }
@@ -154,7 +154,7 @@ fun NSCheatManagerApp(
             when (effect) {
                 is EditorEffect.Saved -> editorEffectActions.saved(effect)
                 is EditorEffect.Error -> snackbar.showSnackbar(
-                    listOfNotNull(operationFailedLabel, effect.detail).joinToString(": "),
+                    resources.localizedUserMessage(effect.message),
                 )
             }
         }
@@ -183,7 +183,7 @@ fun NSCheatManagerApp(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = { SnackbarHost(snackbar, Modifier.testTag("app-snackbar")) },
         bottomBar = {
             if (mainRoute && !editorState.isOpen) NavigationBar {
                 mainDestinations.forEach { destination ->
@@ -269,6 +269,16 @@ fun NSCheatManagerApp(
             },
         )
     }
+}
+
+private fun Resources.localizedUserMessage(message: com.nscheatmanager.app.ui.common.UserMessage): String {
+    val detail = message.detail
+    return listOfNotNull(
+        getString(message.messageRes),
+        detail.line?.let { getString(R.string.line_number, it) },
+        detail.opcode,
+    ).reduceOrNull { left, right -> getString(R.string.message_join, left, right) }
+        ?: getString(message.messageRes)
 }
 
 @Composable
