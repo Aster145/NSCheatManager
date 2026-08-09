@@ -13,4 +13,7 @@ sealed class ProtocolError(message: String, cause: Throwable? = null) : IOExcept
 
     class ResponseTooLarge(val limitBytes: Int) :
         ProtocolError("The device response exceeded $limitBytes bytes")
+
+    class CommandTooLarge(val limitBytes: Int, val actualBytes: Long) :
+        ProtocolError("The device command is $actualBytes bytes; maximum is $limitBytes bytes")
 }

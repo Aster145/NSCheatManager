@@ -98,6 +98,36 @@ class SocketSysBotbaseClientTest {
     }
 
     @Test
+    fun acceptsLargestAbsoluteWriteThatFitsUpstreamCommandBuffer() = runTest {
+        FakeLineServer().use { server ->
+            val client = newClient(server)
+            val payload = ByteArray(10_990) { 0xAB.toByte() }
+
+            client.write(MemoryTarget.Absolute(ULong.MAX_VALUE), payload)
+            server.awaitCommandCount(1)
+
+            val commandBytes = server.commands.single().toByteArray(Charsets.US_ASCII).size
+            val lineEndingBytes = server.lineEndings.single().toByteArray(Charsets.US_ASCII).size
+            assertEquals(22_016, commandBytes + lineEndingBytes)
+        }
+    }
+
+    @Test
+    fun rejectsOversizeWriteBeforeConnectingOrSending() = runTest {
+        val server = FakeLineServer()
+        val client = newClient(server)
+        server.close()
+
+        val error = expectThrows<ProtocolError.CommandTooLarge> {
+            client.write(MemoryTarget.Absolute(ULong.MAX_VALUE), ByteArray(10_991))
+        }
+
+        assertEquals(22_016, error.limitBytes)
+        assertEquals(22_018L, error.actualBytes)
+        assertTrue(server.commands.isEmpty())
+    }
+
+    @Test
     fun freezesResolvedAbsoluteAddressAndUsesExactUnFreezeSpelling() = runTest {
         FakeLineServer().use { server ->
             val client = newClient(server)

@@ -77,16 +77,19 @@ class SocketSysBotbaseClient(
 
     override suspend fun write(target: MemoryTarget, bytes: ByteArray) {
         require(bytes.isNotEmpty()) { "Write bytes must not be empty" }
+        val prefix = writePrefix(target)
+        validatePayloadSize(prefix, target.wireAddress, bytes.size)
         mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
-                sendLocked(writeCommand(target, bytes))
+                sendLocked(writeCommand(prefix, target.wireAddress, bytes))
             }
         }
     }
 
     override suspend fun freeze(absoluteAddress: ULong, bytes: ByteArray) {
         require(bytes.isNotEmpty()) { "Freeze bytes must not be empty" }
+        validatePayloadSize("freeze", absoluteAddress, bytes.size)
         mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
@@ -137,13 +140,22 @@ class SocketSysBotbaseClient(
         return "$prefix ${formatAddress(target.wireAddress)} $size"
     }
 
-    private fun writeCommand(target: MemoryTarget, bytes: ByteArray): String {
-        val prefix = when (target) {
-            is MemoryTarget.Absolute -> "pokeAbsolute"
-            is MemoryTarget.MainRelative -> "pokeMain"
-            is MemoryTarget.HeapRelative -> "poke"
+    private fun writePrefix(target: MemoryTarget): String = when (target) {
+        is MemoryTarget.Absolute -> "pokeAbsolute"
+        is MemoryTarget.MainRelative -> "pokeMain"
+        is MemoryTarget.HeapRelative -> "poke"
+    }
+
+    private fun writeCommand(prefix: String, address: ULong, bytes: ByteArray): String =
+        "$prefix ${formatAddress(address)} ${formatBytes(bytes)}"
+
+    private fun validatePayloadSize(prefix: String, address: ULong, payloadBytes: Int) {
+        val fixedWireBytes =
+            prefix.length + 1 + formatAddress(address).length + 1 + HEX_PREFIX_BYTES + CRLF_BYTES
+        val actualWireBytes = fixedWireBytes.toLong() + payloadBytes.toLong() * HEX_CHARS_PER_BYTE
+        if (actualWireBytes > MAX_COMMAND_BYTES) {
+            throw ProtocolError.CommandTooLarge(MAX_COMMAND_BYTES, actualWireBytes)
         }
-        return "$prefix ${formatAddress(target.wireAddress)} ${formatBytes(bytes)}"
     }
 
     private fun queryLocked(command: String): String {
@@ -152,9 +164,13 @@ class SocketSysBotbaseClient(
     }
 
     private fun sendLocked(command: String) {
+        val wireBytes = "$command\r\n".toByteArray(Charsets.US_ASCII)
+        if (wireBytes.size > MAX_COMMAND_BYTES) {
+            throw ProtocolError.CommandTooLarge(MAX_COMMAND_BYTES, wireBytes.size.toLong())
+        }
         try {
             checkNotNull(socket).getOutputStream().apply {
-                write("$command\r\n".toByteArray(Charsets.US_ASCII))
+                write(wireBytes)
                 flush()
             }
         } catch (error: IOException) {
@@ -247,4 +263,11 @@ class SocketSysBotbaseClient(
             is MemoryTarget.MainRelative -> offset
             is MemoryTarget.HeapRelative -> offset
         }
+
+    private companion object {
+        const val MAX_COMMAND_BYTES = 344 * 32 * 2
+        const val CRLF_BYTES = 2
+        const val HEX_PREFIX_BYTES = 2
+        const val HEX_CHARS_PER_BYTE = 2
+    }
 }
