@@ -21,6 +21,7 @@ import com.nscheatmanager.app.domain.TransferReport
 import com.nscheatmanager.app.domain.UploadConfirmation
 import com.nscheatmanager.app.domain.UploadPreview
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
+import com.nscheatmanager.app.protocol.ProtocolError
 import java.util.Collections
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -52,6 +53,12 @@ enum class CheatDiagnosticKind {
     ArithmeticOverflow,
     InstructionLimitExceeded,
     IoLimitExceeded,
+    Connection,
+    Timeout,
+    Disconnected,
+    MalformedResponse,
+    ResponseTooLarge,
+    CommandTooLarge,
 }
 
 data class CheatDiagnosticUiState(
@@ -282,11 +289,13 @@ class GameViewModel private constructor(
                 try {
                     val report = session.executeGroup(key, group)
                     if (report.status != ExecutionStatus.Complete) {
+                        val diagnostic = report.validationError?.toUiDiagnostic()
+                            ?: report.error?.toUiDiagnostic(report.failureLine ?: group.startLine)
                         effectChannel.trySend(
                             GameEffect.Message(
                                 GameMessage.EXECUTION_FAILED,
-                                report.error?.message ?: report.validationError?.toString(),
-                                report.failureLine,
+                                sourceLine = report.failureLine.takeIf { diagnostic == null },
+                                diagnostic = diagnostic,
                             ),
                         )
                     } else synchronized(claimedExecutions) {
@@ -716,6 +725,23 @@ private fun CheatValidationError.toUiDiagnostic(): CheatDiagnosticUiState = when
         kind = CheatDiagnosticKind.IoLimitExceeded,
         line = line,
         argument = limitBytes.toString(),
+    )
+}
+
+private fun ProtocolError.toUiDiagnostic(line: Int): CheatDiagnosticUiState = when (this) {
+    is ProtocolError.Connection -> CheatDiagnosticUiState(CheatDiagnosticKind.Connection, line)
+    is ProtocolError.Timeout -> CheatDiagnosticUiState(CheatDiagnosticKind.Timeout, line, argument = operation)
+    is ProtocolError.Disconnected -> CheatDiagnosticUiState(CheatDiagnosticKind.Disconnected, line)
+    is ProtocolError.MalformedResponse -> CheatDiagnosticUiState(CheatDiagnosticKind.MalformedResponse, line)
+    is ProtocolError.ResponseTooLarge -> CheatDiagnosticUiState(
+        CheatDiagnosticKind.ResponseTooLarge,
+        line,
+        argument = limitBytes.toString(),
+    )
+    is ProtocolError.CommandTooLarge -> CheatDiagnosticUiState(
+        CheatDiagnosticKind.CommandTooLarge,
+        line,
+        argument = "$actualBytes/$limitBytes",
     )
 }
 

@@ -21,6 +21,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.nscheatmanager.app.R
+import com.nscheatmanager.app.cheats.parser.CheatParseDiagnosticKind
 
 data class CheatEditorActions(
     val selectTab: (EditorTab) -> Unit,
@@ -81,14 +82,15 @@ fun CheatEditorScreen(
                 label = { Text(state.notesTabLabel) },
             )
         }
-        state.validationMessage?.let { message ->
-            val localizedMessage = state.validationLine?.let {
-                stringResource(
-                    R.string.message_join,
-                    stringResource(R.string.line_number, it),
-                    message,
-                )
-            } ?: message
+        state.parseDiagnostic?.let { diagnostic ->
+            val localizedMessage = stringResource(
+                when (diagnostic.kind) {
+                    CheatParseDiagnosticKind.MalformedGroupHeader -> R.string.parse_malformed_group_header
+                    CheatParseDiagnosticKind.InstructionBeforeGroup -> R.string.parse_instruction_before_group
+                    CheatParseDiagnosticKind.InvalidInstructionWord -> R.string.parse_invalid_instruction_word
+                },
+                diagnostic.line,
+            )
             Text(
                 localizedMessage,
                 modifier = Modifier.testTag("editor-validation"),

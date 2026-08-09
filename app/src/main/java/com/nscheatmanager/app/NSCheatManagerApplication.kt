@@ -4,6 +4,7 @@ import android.app.Application
 import com.nscheatmanager.app.data.db.AppDatabase
 import com.nscheatmanager.app.data.files.CheatMirror
 import com.nscheatmanager.app.data.files.CheatZipService
+import com.nscheatmanager.app.data.files.FileEditorDraftStore
 import com.nscheatmanager.app.data.preferences.AppPreferences
 import com.nscheatmanager.app.domain.DeviceRepository
 import com.nscheatmanager.app.domain.DeviceRepositorySessionPersistence
@@ -41,6 +42,7 @@ class AppDependencies(application: Application) {
         File(application.cacheDir, "ftp-staging").toPath(),
     )
     val gameFiles: GameFileGateway = MirrorGameFileGateway(mirror, zipService, synchronization)
+    val editorDrafts = FileEditorDraftStore(File(application.cacheDir, "editor-drafts").toPath())
 
     fun createGameSession(scope: CoroutineScope): DeviceSessionGateway {
         val persistence = DeviceRepositorySessionPersistence(devices)

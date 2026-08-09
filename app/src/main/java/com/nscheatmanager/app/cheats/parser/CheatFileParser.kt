@@ -30,13 +30,13 @@ class CheatFileParser {
 
                 if (trimmed.startsWith("[")) {
                     currentGroup = null
-                    diagnostics += CheatParseDiagnostic(lineNumber, "Malformed group header")
+                    diagnostics += CheatParseDiagnostic(lineNumber, CheatParseDiagnosticKind.MalformedGroupHeader)
                     return@forEachIndexed
                 }
 
                 val group = currentGroup
                 if (group == null) {
-                    diagnostics += CheatParseDiagnostic(lineNumber, "Instruction appears before a group header")
+                    diagnostics += CheatParseDiagnostic(lineNumber, CheatParseDiagnosticKind.InstructionBeforeGroup)
                     return@forEachIndexed
                 }
 
@@ -44,7 +44,7 @@ class CheatFileParser {
                 if (words.any { !HexWord.matches(it) }) {
                     diagnostics += CheatParseDiagnostic(
                         lineNumber,
-                        "Instruction words must be exactly eight hexadecimal characters",
+                        CheatParseDiagnosticKind.InvalidInstructionWord,
                     )
                     return@forEachIndexed
                 }

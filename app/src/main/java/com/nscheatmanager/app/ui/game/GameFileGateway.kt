@@ -2,6 +2,7 @@ package com.nscheatmanager.app.ui.game
 
 import com.nscheatmanager.app.cheats.parser.CheatFile
 import com.nscheatmanager.app.cheats.parser.CheatFileParser
+import com.nscheatmanager.app.cheats.parser.CheatParseDiagnostic
 import com.nscheatmanager.app.data.files.CheatMirror
 import com.nscheatmanager.app.data.files.CheatZipService
 import com.nscheatmanager.app.data.files.ZipInspection
@@ -30,9 +31,8 @@ data class EditableGameFiles(
 )
 
 class EditableCheatParseException(
-    val line: Int,
-    detail: String,
-) : IllegalArgumentException("Cheat parse failed at line $line: $detail")
+    val diagnostic: CheatParseDiagnostic,
+) : IllegalArgumentException("Cheat text is malformed")
 
 interface GameFileGateway {
     suspend fun loadEditable(identity: GameIdentity, checkpoint: () -> Unit = {}): EditableGameFiles
@@ -99,7 +99,7 @@ class MirrorGameFileGateway(
     ): CheatFile = withContext(dispatcher) {
         val parsed = parser.parse(cheatText)
         parsed.diagnostics.firstOrNull()?.let { diagnostic ->
-            throw EditableCheatParseException(diagnostic.line, diagnostic.message)
+            throw EditableCheatParseException(diagnostic)
         }
         val cheatBytes = cheatText.toByteArray(StandardCharsets.UTF_8)
         val notesBytes = notesText.toByteArray(StandardCharsets.UTF_8)

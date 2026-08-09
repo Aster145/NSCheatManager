@@ -55,7 +55,7 @@ class CheatFileParserTest {
         val file = parser.parse("580F0000 046A12B0\n[group]\n580F0000 00000000")
 
         assertEquals(1, file.diagnostics.single().line)
-        assertEquals("Instruction appears before a group header", file.diagnostics.single().message)
+        assertEquals(CheatParseDiagnosticKind.InstructionBeforeGroup, file.diagnostics.single().kind)
         assertEquals(listOf(3), file.groups.single().instructions.map { it.sourceLine })
     }
 
@@ -64,7 +64,7 @@ class CheatFileParserTest {
         val file = parser.parse("[broken\n[group]\n580F0000 046A12B0")
 
         assertEquals(1, file.diagnostics.single().line)
-        assertEquals("Malformed group header", file.diagnostics.single().message)
+        assertEquals(CheatParseDiagnosticKind.MalformedGroupHeader, file.diagnostics.single().kind)
         assertEquals("group", file.groups.single().name)
     }
 
@@ -102,7 +102,7 @@ class CheatFileParserTest {
         )
 
         assertEquals(listOf(2), file.diagnostics.map { it.line })
-        assertEquals("Instruction words must be exactly eight hexadecimal characters", file.diagnostics[0].message)
+        assertEquals(CheatParseDiagnosticKind.InvalidInstructionWord, file.diagnostics[0].kind)
         assertEquals(listOf(3, 4), file.groups.single().instructions.map { it.sourceLine })
     }
 

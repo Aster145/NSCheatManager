@@ -57,7 +57,11 @@ class ZipInspection internal constructor(
     internal val token: String,
 )
 
-class ZipImportError(message: String, cause: Throwable? = null) : Exception(message, cause)
+class ZipImportError(
+    message: String,
+    cause: Throwable? = null,
+    val parseDiagnostic: com.nscheatmanager.app.cheats.parser.CheatParseDiagnostic? = null,
+) : Exception(message, cause)
 
 class ZipExportError(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -111,7 +115,7 @@ class CheatZipService internal constructor(
         val parsed = parser.parse(cheatText)
         if (parsed.diagnostics.isNotEmpty()) {
             val first = parsed.diagnostics.first()
-            throw ZipImportError("Cheat parse failed at line ${first.line}: ${first.message}")
+            throw ZipImportError("Cheat file is malformed", parseDiagnostic = first)
         }
 
         return mirror.withWriteTransaction {

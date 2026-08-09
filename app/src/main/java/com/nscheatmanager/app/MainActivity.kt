@@ -33,7 +33,11 @@ class MainActivity : AppCompatActivity() {
         GameViewModel.Factory(dependencies.gameDevices, dependencies.gameFiles, dependencies::createGameSession)
     }
     private val editorViewModel by viewModels<CheatEditorViewModel> {
-        CheatEditorViewModel.Factory(dependencies.gameFiles, gameViewModel::requireCurrentOperationKey)
+        CheatEditorViewModel.Factory(
+            dependencies.gameFiles,
+            gameViewModel::requireCurrentOperationKey,
+            dependencies.editorDrafts,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

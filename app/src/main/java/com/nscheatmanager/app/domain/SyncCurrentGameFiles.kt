@@ -81,9 +81,9 @@ sealed interface TransferReport {
 }
 
 class DownloadedCheatParseError(
-    val line: Int,
-    detail: String,
-) : IOException("Downloaded cheat parse failed at line $line: $detail")
+    val diagnostic: com.nscheatmanager.app.cheats.parser.CheatParseDiagnostic?,
+    cause: Throwable? = null,
+) : IOException("Downloaded cheat file is malformed", cause)
 
 class NotesEncodingError : IOException("notes.txt must contain valid UTF-8 text")
 
@@ -347,10 +347,10 @@ class SyncCurrentGameFiles(
                 .decode(ByteBuffer.wrap(bytes))
                 .toString()
         } catch (error: Exception) {
-            throw DownloadedCheatParseError(1, "Cheat file is not valid UTF-8")
+            throw DownloadedCheatParseError(null, error)
         }
         parser.parse(text).diagnostics.firstOrNull()?.let { diagnostic ->
-            throw DownloadedCheatParseError(diagnostic.line, diagnostic.message)
+            throw DownloadedCheatParseError(diagnostic)
         }
     }
 

@@ -22,16 +22,35 @@ internal fun interface MirrorMoveOps {
     fun move(source: Path, target: Path)
 }
 
+internal enum class MirrorTransactionCut { INIT, STAGED, BACKED_UP, TARGET_MOVED, PUBLISHED, CLEANUP }
+
+internal fun interface MirrorTransactionHook {
+    fun reached(cut: MirrorTransactionCut, index: Int?)
+
+    companion object {
+        val None = MirrorTransactionHook { _, _ -> }
+    }
+}
+
 /** App-controlled mirror of Atmosphere's per-title cheat layout. */
 class CheatMirror internal constructor(
     root: Path,
     private val moveOps: MirrorMoveOps,
+    private val durability: FileDurability,
+    private val transactionHook: MirrorTransactionHook,
 ) {
-    constructor(root: Path) : this(root, MirrorMoveOps(::defaultMoveReplacing))
+    internal constructor(root: Path, moveOps: MirrorMoveOps) :
+        this(root, moveOps, platformFileDurability(), MirrorTransactionHook.None)
+    constructor(root: Path) :
+        this(root, MirrorMoveOps(::defaultMoveReplacing), platformFileDurability(), MirrorTransactionHook.None)
     constructor(root: File) : this(root.toPath())
 
     val root: Path = root.toAbsolutePath().normalize()
     private val writeLock: ReentrantLock = Locks.computeIfAbsent(this.root) { ReentrantLock() }
+
+    init {
+        withWriteTransaction { recoverTransactionsLocked() }
+    }
 
     fun cheatRelative(titleId: TitleId, buildId: BuildId): String =
         "atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}.txt"
@@ -80,21 +99,28 @@ class CheatMirror internal constructor(
             val journal = journalPath(transactionId)
             createDirectoriesSecure(requireNotNull(journal.parent))
             writeJournal(journal, TransactionPhase.INIT, entries)
+            transactionHook.reached(MirrorTransactionCut.INIT, null)
             try {
                 entries.forEach { writeCompleteFile(it.stage, it.content) }
                 writeJournal(journal, TransactionPhase.STAGED, entries)
+                transactionHook.reached(MirrorTransactionCut.STAGED, null)
                 entries.filter(TransactionEntry::oldExisted).forEach { entry ->
                     writeCompleteFile(entry.backup, Files.readAllBytes(entry.target))
                 }
                 writeJournal(journal, TransactionPhase.BACKED_UP, entries)
-                entries.forEach { moveReplacing(it.stage, it.target) }
+                transactionHook.reached(MirrorTransactionCut.BACKED_UP, null)
+                entries.forEachIndexed { index, entry ->
+                    moveReplacing(entry.stage, entry.target)
+                    transactionHook.reached(MirrorTransactionCut.TARGET_MOVED, index)
+                }
                 writeJournal(journal, TransactionPhase.PUBLISHED, entries)
-                cleanupTransaction(entries, journal)
-            } catch (error: Throwable) {
+                transactionHook.reached(MirrorTransactionCut.PUBLISHED, null)
+                cleanupTransaction(entries, journal, emitHooks = true)
+            } catch (error: Exception) {
                 try {
                     rollbackTransaction(entries)
-                    cleanupTransaction(entries, journal)
-                } catch (rollback: Throwable) {
+                    cleanupTransaction(entries, journal, emitHooks = false)
+                } catch (rollback: Exception) {
                     error.addSuppressed(rollback)
                 }
                 throw error
@@ -118,6 +144,7 @@ class CheatMirror internal constructor(
         } catch (error: AtomicMoveNotSupportedException) {
             Files.move(canonicalSource, canonicalTarget, StandardCopyOption.REPLACE_EXISTING)
         }
+        durability.forceDirectory(requireNotNull(canonicalTarget.parent))
     }
 
     internal fun createDirectoriesSecure(directory: Path, created: MutableList<Path>? = null) {
@@ -138,6 +165,8 @@ class CheatMirror internal constructor(
                 try {
                     Files.createDirectory(cursor)
                     created?.add(cursor)
+                    durability.forceDirectory(requireNotNull(cursor.parent))
+                    durability.forceDirectory(cursor)
                 } catch (_: FileAlreadyExistsException) {
                     require(!Files.isSymbolicLink(cursor) && Files.isDirectory(cursor, LinkOption.NOFOLLOW_LINKS)) {
                         "Mirror parent components must be real directories"
@@ -190,7 +219,7 @@ class CheatMirror internal constructor(
             paths.filter { it.fileName.toString().endsWith(JOURNAL_SUFFIX) }.forEach { journal ->
                 val recovered = readJournal(journal)
                 if (recovered.phase != TransactionPhase.PUBLISHED) rollbackTransaction(recovered.entries)
-                cleanupTransaction(recovered.entries, journal)
+                cleanupTransaction(recovered.entries, journal, emitHooks = false)
             }
         }
     }
@@ -208,17 +237,18 @@ class CheatMirror internal constructor(
                     }
                 }
             } else {
-                Files.deleteIfExists(entry.target)
+                deleteDurably(entry.target)
             }
         }
     }
 
-    private fun cleanupTransaction(entries: List<TransactionEntry>, journal: Path) {
-        entries.forEach { entry ->
-            Files.deleteIfExists(entry.stage)
-            Files.deleteIfExists(entry.backup)
+    private fun cleanupTransaction(entries: List<TransactionEntry>, journal: Path, emitHooks: Boolean) {
+        entries.forEachIndexed { index, entry ->
+            deleteDurably(entry.stage)
+            deleteDurably(entry.backup)
+            if (emitHooks) transactionHook.reached(MirrorTransactionCut.CLEANUP, index)
         }
-        Files.deleteIfExists(journal)
+        deleteDurably(journal)
     }
 
     private fun writeJournal(journal: Path, phase: TransactionPhase, entries: List<TransactionEntry>) {
@@ -237,7 +267,7 @@ class CheatMirror internal constructor(
             writeCompleteFile(temporary, bytes)
             moveReplacing(temporary, journal)
         } finally {
-            Files.deleteIfExists(temporary)
+            deleteDurably(temporary)
         }
     }
 
@@ -279,8 +309,13 @@ class CheatMirror internal constructor(
         FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
             val buffer = ByteBuffer.wrap(content)
             while (buffer.hasRemaining()) channel.write(buffer)
-            channel.force(true)
         }
+        durability.forceFile(path)
+        durability.forceDirectory(requireNotNull(path.parent))
+    }
+
+    private fun deleteDurably(path: Path) {
+        if (Files.deleteIfExists(path)) durability.forceDirectory(requireNotNull(path.parent))
     }
 
     private fun ensureRootDirectory() {

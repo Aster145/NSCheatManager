@@ -1,10 +1,14 @@
 package com.nscheatmanager.app.ui.editor
 
 import com.nscheatmanager.app.cheats.parser.CheatFile
+import com.nscheatmanager.app.cheats.parser.CheatParseDiagnosticKind
 import com.nscheatmanager.app.core.model.BuildId
 import com.nscheatmanager.app.core.model.TitleId
 import com.nscheatmanager.app.data.files.ZipInspection
+import com.nscheatmanager.app.data.files.EditorDraft
+import com.nscheatmanager.app.data.files.FileEditorDraftStore
 import com.nscheatmanager.app.domain.DeviceProfile
+import com.nscheatmanager.app.domain.GameOperationKey
 import com.nscheatmanager.app.domain.DownloadOverwriteConfirmation
 import com.nscheatmanager.app.domain.TransferReport
 import com.nscheatmanager.app.domain.UploadConfirmation
@@ -31,8 +35,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.LinkOption
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CheatEditorViewModelTest {
@@ -66,7 +73,8 @@ class CheatEditorViewModelTest {
         viewModel.save()
         advanceUntilIdle()
 
-        assertEquals(2, viewModel.uiState.value.validationLine)
+        assertEquals(2, viewModel.uiState.value.parseDiagnostic?.line)
+        assertEquals(CheatParseDiagnosticKind.InvalidInstructionWord, viewModel.uiState.value.parseDiagnostic?.kind)
         assertEquals(0, gateway.saves)
         assertTrue(viewModel.uiState.value.isOpen)
     }
@@ -127,19 +135,83 @@ class CheatEditorViewModelTest {
     @Test
     fun dirtyTextAndDiscardRouteRestoreFromSavedStateHandle() = runTest(dispatcher) {
         val handle = SavedStateHandle()
+        val draftStore = FileEditorDraftStore(Files.createTempDirectory("editor-draft-restore-"))
         val gateway = FakeEditorGateway("[Valid]\n04000000 00000020 00000001\n", "")
-        val first = CheatEditorViewModel(gateway, savedStateHandle = handle)
+        val first = CheatEditorViewModel(gateway, savedStateHandle = handle, draftStore = draftStore)
         first.open(GAME)
         advanceUntilIdle()
-        first.updateNotesText("survives process recreation")
+        val nearMaximum = "n".repeat(FileEditorDraftStore.DEFAULT_MAX_TEXT_BYTES - 1)
+        first.updateNotesText(nearMaximum)
         first.requestClose("about")
         val pendingId = requireNotNull(first.uiState.value.pendingDiscard).id
+        val serializedFootprint = handle.keys().sumOf { key ->
+            key.length + (handle.get<Any?>(key)?.toString()?.length ?: 0)
+        }
+        assertTrue("SavedState must remain Binder-safe, was $serializedFootprint chars", serializedFootprint < 1_024)
+        assertTrue(handle.keys().none { key -> handle.get<Any?>(key) == nearMaximum })
 
-        val restored = CheatEditorViewModel(gateway, savedStateHandle = handle)
+        val restored = CheatEditorViewModel(gateway, savedStateHandle = handle, draftStore = draftStore)
 
-        assertEquals("survives process recreation", restored.uiState.value.notesText)
+        assertEquals(nearMaximum, restored.uiState.value.notesText)
         assertEquals(pendingId, restored.uiState.value.pendingDiscard?.id)
         assertEquals("about", restored.uiState.value.pendingDiscard?.route)
+    }
+
+    @Test
+    fun draftStoreBoundsTokensContentExpiryAndMetadataIntegrity() {
+        val root = Files.createTempDirectory("editor-draft-security-")
+        var now = 1_000L
+        val store = FileEditorDraftStore(root, clockMillis = { now }, expiryMillis = 100L)
+        val key = GameOperationKey("switch", GAME.titleId, GAME.buildId, 7L)
+        val token = store.save(
+            null,
+            EditorDraft(GAME, key, "cheat", "notes", "old cheat", "old notes"),
+        )
+        assertEquals("notes", store.load(token)?.notesText)
+        assertThrows(IllegalArgumentException::class.java) { store.load("../outside") }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.save(
+                token,
+                EditorDraft(
+                    GAME,
+                    key,
+                    "x".repeat(FileEditorDraftStore.DEFAULT_MAX_TEXT_BYTES + 1),
+                    "",
+                    "",
+                    "",
+                ),
+            )
+        }
+
+        val draftPath = Files.list(root).use { paths ->
+            paths.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }.findFirst().orElseThrow()
+        }
+        val corrupted = Files.readAllBytes(draftPath)
+        corrupted[corrupted.lastIndex / 2] = (corrupted[corrupted.lastIndex / 2].toInt() xor 0x01).toByte()
+        Files.write(draftPath, corrupted)
+        assertThrows(IllegalArgumentException::class.java) { store.load(token) }
+
+        val fresh = store.save(null, EditorDraft(GAME, key, "fresh", "", "fresh", ""))
+        now += 101L
+        store.cleanupExpired()
+        assertNull(store.load(fresh))
+    }
+
+    @Test
+    fun draftStoreRejectsSymlinkEntryWithoutTouchingReferent() {
+        val root = Files.createTempDirectory("editor-draft-link-")
+        val outside = Files.createTempFile("editor-draft-outside-", ".bin")
+        Files.write(outside, "sentinel".toByteArray())
+        val token = "11111111-1111-1111-1111-111111111111"
+        try {
+            Files.createSymbolicLink(root.resolve("$token.draft"), outside)
+        } catch (error: Exception) {
+            org.junit.Assume.assumeNoException("Symbolic links unavailable", error)
+        }
+        val store = FileEditorDraftStore(root)
+
+        assertThrows(IllegalArgumentException::class.java) { store.load(token) }
+        assertEquals("sentinel", String(Files.readAllBytes(outside)))
     }
 
     private class OutOfOrderEditorGateway(

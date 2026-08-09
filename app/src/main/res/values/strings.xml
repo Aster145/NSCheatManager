@@ -105,4 +105,13 @@
     <string name="diagnostic_instruction_limit">Line %1$d · instruction limit %2$s</string>
     <string name="diagnostic_io_limit">Line %1$d · I/O limit %2$s bytes</string>
     <string name="last_executed">Last executed: %1$s</string>
+    <string name="parse_malformed_group_header">Line %1$d · malformed group header</string>
+    <string name="parse_instruction_before_group">Line %1$d · instruction appears before a group header</string>
+    <string name="parse_invalid_instruction_word">Line %1$d · instruction words must be exactly eight hexadecimal characters</string>
+    <string name="diagnostic_connection">Line %1$d · connection failed</string>
+    <string name="diagnostic_timeout">Line %1$d · timed out during %2$s</string>
+    <string name="diagnostic_disconnected">Line %1$d · device disconnected</string>
+    <string name="diagnostic_malformed_response">Line %1$d · malformed device response</string>
+    <string name="diagnostic_response_too_large">Line %1$d · response exceeds %2$s bytes</string>
+    <string name="diagnostic_command_too_large">Line %1$d · command bytes actual/maximum %2$s</string>
 </resources>

@@ -25,7 +25,13 @@ data class EncodedInstruction(
 )
 
 /** A syntax problem in the source file, with a one-based line number. */
+enum class CheatParseDiagnosticKind {
+    MalformedGroupHeader,
+    InstructionBeforeGroup,
+    InvalidInstructionWord,
+}
+
 data class CheatParseDiagnostic(
     val line: Int,
-    val message: String,
+    val kind: CheatParseDiagnosticKind,
 )

@@ -140,7 +140,7 @@ fun NSCheatManagerApp(
                     val intent = ZipShareService(context).createIntent(effect.archive)
                     context.startActivity(Intent.createChooser(intent, shareChooserTitle))
                 }.onFailure(gameEffectActions.externalFailure)
-                is GameEffect.Message -> snackbar.showSnackbar(resources.gameMessage(effect))
+                is GameEffect.Message -> snackbar.showSnackbar(resources.localizedGameMessage(effect))
             }
         }
     }
@@ -294,7 +294,7 @@ private fun GameConfirmationDialog(confirmation: GameConfirmation, onDismiss: ()
     )
 }
 
-private fun Resources.gameMessage(effect: GameEffect.Message): String {
+internal fun Resources.localizedGameMessage(effect: GameEffect.Message): String {
     val label = getString(
         when (effect.message) {
             GameMessage.SELECT_DEVICE -> R.string.select_device
@@ -345,6 +345,24 @@ private fun Resources.localizedDiagnostic(diagnostic: CheatDiagnosticUiState): S
     )
     CheatDiagnosticKind.IoLimitExceeded -> getString(
         R.string.diagnostic_io_limit,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.Connection -> getString(R.string.diagnostic_connection, diagnostic.line)
+    CheatDiagnosticKind.Timeout -> getString(
+        R.string.diagnostic_timeout,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.Disconnected -> getString(R.string.diagnostic_disconnected, diagnostic.line)
+    CheatDiagnosticKind.MalformedResponse -> getString(R.string.diagnostic_malformed_response, diagnostic.line)
+    CheatDiagnosticKind.ResponseTooLarge -> getString(
+        R.string.diagnostic_response_too_large,
+        diagnostic.line,
+        diagnostic.argument.orEmpty(),
+    )
+    CheatDiagnosticKind.CommandTooLarge -> getString(
+        R.string.diagnostic_command_too_large,
         diagnostic.line,
         diagnostic.argument.orEmpty(),
     )

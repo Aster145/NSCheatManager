@@ -5,6 +5,7 @@ import com.nscheatmanager.app.cheats.parser.CheatGroup
 import com.nscheatmanager.app.cheats.parser.EncodedInstruction
 import com.nscheatmanager.app.cheats.vm.ExecutionReport
 import com.nscheatmanager.app.cheats.vm.ExecutionStatus
+import com.nscheatmanager.app.cheats.vm.CheatValidationError
 import com.nscheatmanager.app.core.model.BuildId
 import com.nscheatmanager.app.core.model.TitleId
 import com.nscheatmanager.app.data.files.OverwriteImpact
@@ -195,6 +196,32 @@ class GameViewModelTest {
     }
 
     @Test
+    fun rejectedRuntimeValidationProducesStructuredDiagnosticWithoutRawToString() = runTest(dispatcher) {
+        val session = FakeSessionGateway(
+            executionReport = ExecutionReport(
+                ExecutionStatus.Rejected,
+                completedWrites = 0,
+                failureLine = 18,
+                validationError = CheatValidationError.UnsupportedOpcode(18, 0x8),
+            ),
+        )
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
+        session.state.value = readyState(CheatFile(listOf(SUPPORTED), emptyList()))
+        advanceUntilIdle()
+
+        val effect = async { viewModel.effects.first() }
+        viewModel.onCheatChecked("Write once", wasChecked = false, isChecked = true)
+        advanceUntilIdle()
+        val message = effect.await() as GameEffect.Message
+
+        assertEquals(GameMessage.EXECUTION_FAILED, message.message)
+        assertEquals(CheatDiagnosticKind.UnsupportedOpcode, message.diagnostic?.kind)
+        assertEquals(18, message.diagnostic?.line)
+        assertEquals("0x8", message.diagnostic?.opcode)
+        assertNull(message.detail)
+    }
+
+    @Test
     fun zipInspectionConfirmationLivesInImmutableStateAndDuplicateConfirmImportsOnce() = runTest(dispatcher) {
         val files = FakeGameFileGateway()
         val session = FakeSessionGateway()
@@ -345,6 +372,7 @@ class GameViewModelTest {
     private class FakeSessionGateway(
         private val executeRelease: CompletableDeferred<Unit> = CompletableDeferred(Unit),
         private val acknowledgeExecution: Boolean = true,
+        private val executionReport: ExecutionReport = ExecutionReport(ExecutionStatus.Complete, completedWrites = 1),
     ) : GameSessionGateway {
         override val state = MutableStateFlow(DeviceSessionState())
         val connects = mutableListOf<DeviceProfile>()
@@ -374,7 +402,7 @@ class GameViewModelTest {
             if (acknowledgeExecution) {
                 state.value = state.value.copy(checkedGroups = state.value.checkedGroups + group.name)
             }
-            return ExecutionReport(ExecutionStatus.Complete, completedWrites = 1)
+            return executionReport
         }
 
         override suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) {

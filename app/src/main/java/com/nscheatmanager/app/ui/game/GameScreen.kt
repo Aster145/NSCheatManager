@@ -376,6 +376,25 @@ private fun localizedDiagnostic(group: CheatGroupUiState): String {
                 diagnostic.line,
                 diagnostic.argument.orEmpty(),
             )
+            CheatDiagnosticKind.Connection -> stringResource(R.string.diagnostic_connection, diagnostic.line)
+            CheatDiagnosticKind.Timeout -> stringResource(
+                R.string.diagnostic_timeout,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+            CheatDiagnosticKind.Disconnected -> stringResource(R.string.diagnostic_disconnected, diagnostic.line)
+            CheatDiagnosticKind.MalformedResponse ->
+                stringResource(R.string.diagnostic_malformed_response, diagnostic.line)
+            CheatDiagnosticKind.ResponseTooLarge -> stringResource(
+                R.string.diagnostic_response_too_large,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
+            CheatDiagnosticKind.CommandTooLarge -> stringResource(
+                R.string.diagnostic_command_too_large,
+                diagnostic.line,
+                diagnostic.argument.orEmpty(),
+            )
         }
     }
     val line = group.unsupportedLine?.let { stringResource(R.string.line_number, it) }
