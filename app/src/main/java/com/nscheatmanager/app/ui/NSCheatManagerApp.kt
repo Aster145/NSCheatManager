@@ -15,6 +15,11 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -101,12 +107,12 @@ interface GameExternalActions {
     data object Platform : GameExternalActions
 }
 
-private data class MainDestination(val route: String, val label: Int, val tag: String, val glyph: String)
+private data class MainDestination(val route: String, val label: Int, val tag: String, val icon: ImageVector)
 
 private val mainDestinations = listOf(
-    MainDestination("game", R.string.nav_game, "nav-game", "▣"),
-    MainDestination("cheats", R.string.nav_cheats, "nav-cheats", "✦"),
-    MainDestination("memory", R.string.nav_memory, "nav-memory", "⌁"),
+    MainDestination("game", R.string.nav_game, "nav-game", Icons.Filled.Home),
+    MainDestination("cheats", R.string.nav_cheats, "nav-cheats", Icons.Filled.Star),
+    MainDestination("memory", R.string.nav_memory, "nav-memory", Icons.Filled.Build),
 )
 
 @Composable
@@ -210,7 +216,7 @@ fun NSCheatManagerApp(
                         modifier = Modifier.testTag(destination.tag),
                         selected = route == destination.route,
                         onClick = { requestNavigation(destination.route) },
-                        icon = { Text(destination.glyph) },
+                        icon = { Icon(destination.icon, contentDescription = null) },
                         label = { Text(stringResource(destination.label)) },
                     )
                 }

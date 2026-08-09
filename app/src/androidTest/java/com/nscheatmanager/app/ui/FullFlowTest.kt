@@ -184,7 +184,7 @@ class FullFlowTest {
         compose.runOnIdle { editorOpen.value = false }
         compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed(); assertInside320("device-selector"); assertInside320("overflow-menu")
         compose.onNodeWithTag("nav-memory").performClick(); compose.onNodeWithTag("memory-screen").assertIsDisplayed(); assertInside320("memory-action-row")
-        compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed(); compose.onNodeWithTag("cheat-Accessible cheat").assertIsDisplayed(); assertInside320("cheat-Accessible cheat")
+        compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed(); compose.onNodeWithTag("cheat-Accessible cheat").performScrollTo().assertIsDisplayed(); assertInside320("cheat-Accessible cheat")
         compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
         compose.onNodeWithTag("language-actions").performScrollTo(); assertInside320("language-actions")

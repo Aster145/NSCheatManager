@@ -2,8 +2,8 @@ package com.nscheatmanager.app.ui.game
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +18,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -44,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -97,17 +100,32 @@ fun GameScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            stringResource(R.string.current_game),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(Color(0xFF5E478D)),
+                        ) {
+                            Image(
+                                painter = painterResource(R.mipmap.ic_launcher_foreground),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                stringResource(R.string.app_name),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                stringResource(R.string.current_game),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
                 actions = {
@@ -160,6 +178,7 @@ fun GameScreen(
                 CheatEditorScreen(editorState, editorActions)
             } else {
                 GameIdentityCard(state)
+                GameActionRow(state, actions)
                 CheatGroups(state, actions)
             }
             Spacer(Modifier.height(8.dp))
@@ -209,8 +228,10 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
                 Box(
                     Modifier.size(9.dp).background(
                         if (state.connection == ConnectionState.Ready) Color(0xFF35A36B)
@@ -218,22 +239,10 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
                         CircleShape,
                     ),
                 )
-                Spacer(Modifier.width(10.dp))
-                DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f))
-            }
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                if (maxWidth < 280.dp) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConnectionButton(state, actions, Modifier.fillMaxWidth())
-                        DetachButton(state, actions, Modifier.fillMaxWidth())
-                    }
-                } else {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConnectionButton(state, actions, Modifier.weight(1f))
-                        DetachButton(state, actions, Modifier.weight(1f))
-                    }
-                }
-            }
+            Spacer(Modifier.width(6.dp))
+            DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f))
+            Spacer(Modifier.width(6.dp))
+            ConnectionButton(state, actions)
         }
     }
 }
@@ -252,8 +261,22 @@ private fun DeviceSelector(
             modifier = Modifier.fillMaxWidth().testTag("device-selector"),
             onClick = { expanded = true },
             enabled = devices.isNotEmpty(),
+            border = null,
+            contentPadding = ButtonDefaults.ContentPadding,
         ) {
-            Text(selected?.let { "${it.name} · ${it.host}" } ?: stringResource(R.string.select_device))
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    selected?.name ?: stringResource(R.string.select_device),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                selected?.let {
+                    Text(
+                        it.host,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             devices.forEach { device ->
@@ -272,6 +295,7 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
         modifier = modifier.testTag("connect-toggle"),
         onClick = actions.connectionToggle,
         enabled = state.selectedDeviceId != null && !state.busy,
+        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
     ) {
         Text(
             stringResource(
@@ -282,6 +306,18 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
                 },
             ),
         )
+    }
+}
+
+@Composable
+private fun GameActionRow(state: GameUiState, actions: GameScreenActions) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            modifier = Modifier.weight(1f).testTag("recognize-game-primary"),
+            onClick = actions.recognize,
+            enabled = state.connection == ConnectionState.Ready && !state.busy,
+        ) { Text(stringResource(R.string.recognize_game)) }
+        DetachButton(state, actions, Modifier.weight(1f))
     }
 }
 
@@ -325,13 +361,6 @@ private fun GameIdentityCard(state: GameUiState) {
                 IdentityBlock(stringResource(R.string.main_base), state.mainBase, Modifier.weight(1f))
             }
             IdentityBlock(stringResource(R.string.heap_base), state.heapBase)
-            state.mirrorPath?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.68f),
-                )
-            }
         }
     }
 }
@@ -350,6 +379,24 @@ private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Mo
 
 @Composable
 private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.nav_cheats),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+        )
+        if (!state.missingMirror) {
+            Text(
+                stringResource(R.string.available_cheats_count, state.groups.size),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
     if (state.missingMirror) {
         Card(Modifier.fillMaxWidth().testTag("missing-cheat-file")) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
