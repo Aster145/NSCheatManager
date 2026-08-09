@@ -30,6 +30,14 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
+    interface ContentFactory {
+        @Composable fun Content()
+        fun close() = Unit
+    }
+
+    companion object {
+        @Volatile var contentFactoryForTest: ContentFactory? = null
+    }
     private val dependencies get() = (application as NSCheatManagerApplication).dependencies
     private val settingsViewModel by viewModels<SettingsViewModel> {
         SettingsViewModel.Factory(dependencies.devices, dependencies.preferences, ::applyLocale)
@@ -48,6 +56,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        contentFactoryForTest?.let { factory ->
+            setContent { NSCheatManagerTheme { factory.Content() } }
+            return
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dependencies.preferences.languageTag.collect(::applyLocale)
@@ -111,6 +123,7 @@ class MainActivity : AppCompatActivity() {
                         zipDocument = gameViewModel::onZipDocument,
                         confirmPending = gameViewModel::confirmPending,
                         dismissPending = gameViewModel::dismissPending,
+                        zipFailure = gameViewModel::onZipExternalFailure,
                         externalFailure = gameViewModel::onExternalFailure,
                     ),
                     editorState = editorState,
@@ -140,6 +153,11 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) contentFactoryForTest?.close()
+        super.onDestroy()
     }
 
     private fun applyLocale(languageTag: String) {

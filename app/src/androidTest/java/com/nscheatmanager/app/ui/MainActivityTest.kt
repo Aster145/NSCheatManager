@@ -17,11 +17,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.After
+import kotlinx.coroutines.runBlocking
+import androidx.core.os.LocaleListCompat
+import com.nscheatmanager.app.NSCheatManagerApplication
 
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
+    private val createdDeviceIds = mutableListOf<String>()
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
+
+    @After fun restoreGlobalState() = runBlocking {
+        val dependencies = (compose.activity.application as NSCheatManagerApplication).dependencies
+        createdDeviceIds.forEach { dependencies.devices.deleteDevice(it) }
+        dependencies.preferences.setLanguageTag("zh-CN")
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"))
+        MainActivity.contentFactoryForTest = null
+    }
 
     @Test
     fun realCompositionRootStartsOnCheatsAndOpensSettings() {
@@ -64,6 +77,22 @@ class MainActivityTest {
         openSettings()
         compose.onNodeWithText("设置").assertIsDisplayed()
         compose.onNodeWithText("界面语言").assertIsDisplayed()
+    }
+
+    @Test fun selectedDeviceAndLanguagePersistAcrossProductionActivityRecreation() {
+        val dependencies = (compose.activity.application as NSCheatManagerApplication).dependencies
+        val device = runBlocking {
+            dependencies.devices.addDevice("Lifecycle Switch", "192.168.77.35").also {
+                dependencies.devices.selectDevice(it.id)
+                dependencies.preferences.setLanguageTag("en")
+            }
+        }
+        createdDeviceIds += device.id
+        compose.waitUntil(10_000) { AppCompatDelegate.getApplicationLocales().toLanguageTags() == "en" }
+        compose.activityRule.scenario.recreate()
+        openSettings()
+        compose.onNodeWithText("Lifecycle Switch").assertIsDisplayed()
+        compose.onNodeWithText("Interface language").assertIsDisplayed()
     }
 
     private fun openSettings() {

@@ -8,6 +8,10 @@
 - Added localized English and Simplified Chinese messages for all mapped categories.
 - Added accessible edit-mode toggle semantics and kept the decorative checkbox out of the accessibility tree.
 - Added FullFlow coverage for one-shot effect consumption across composition recreation, edit-mode toggle state, and the 320 dp game shell. Existing lifecycle tests cover immutable write confirmation consumption, lock reconciliation, upload/import/share confirmation claims, editor draft process restoration, selected device, and locale restoration.
+- Fix round 1 adds typed `OperationContext` routing. Sys-botbase, Noexs, FTP, ZIP, share, editor, settings, and memory failures no longer share ambiguous string operation names; only network contexts retain a validated endpoint and the configured service port. Every Noexs transport/result failure maps to the Noexs category.
+- Added exhaustive subtype coverage for protocol, FTP, and cheat-validation errors, including size/verification/base FTP failures, all validation forms, cancellation propagation, and diagnostic redaction.
+- Added a production `MainActivity` composition factory used by an API 28 `ActivityScenario` lifecycle harness. Confirmed write, freeze, upload/direct upload, ZIP import, and share mutations execute exactly once through recreate/background transitions; pending confirmations survive before consumption and disappear afterwards; final owner close occurs exactly once.
+- Added isolated 320 dp, 1.5x font-scale flows in both English and Simplified Chinese across Game, Cheats/editor, Memory, Settings, and About, plus production recreation coverage for selected device and locale persistence.
 
 ## TDD evidence
 
@@ -17,12 +21,14 @@
 
 ## Verification
 
-On the Android 9 / API 28 emulator:
+On the Android 9 / API 28 emulator, the final full rerun was:
 
 ```text
-./gradlew clean testDebugUnitTest lintDebug connectedDebugAndroidTest assembleDebug
-BUILD SUCCESSFUL in 46s
-44 instrumentation tests passed
+./gradlew testDebugUnitTest lintDebug connectedDebugAndroidTest assembleDebug
+BUILD SUCCESSFUL in 34s
+225 JVM tests (5 skipped) and 48 instrumentation tests passed
 ```
+
+The immediately preceding clean run built/linted/assembled and passed all 48 instrumentation tests, but one pre-existing FTP concurrency test encountered an intermittent test-side `ConcurrentModificationException`. Its isolated rerun passed, followed by the successful complete matrix above.
 
 Lint completed with zero errors. Remaining compiler messages are pre-existing API deprecation advisories.

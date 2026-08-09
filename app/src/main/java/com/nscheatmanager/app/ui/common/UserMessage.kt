@@ -6,11 +6,13 @@ enum class ErrorCategory { CONNECTION, SESSION, PARSE, EXECUTION, FTP, ZIP, NOEX
 
 data class NetworkEndpoint(val host: String, val port: Int)
 
-data class ErrorContext(val operation: String? = null, val endpoint: NetworkEndpoint? = null)
+enum class OperationContext { SYSBOT, NOEXS, FTP, ZIP, SHARE, LINK, EDITOR, SETTINGS, MEMORY }
+
+data class ErrorContext(val operation: OperationContext? = null, val endpoint: NetworkEndpoint? = null)
 
 data class DiagnosticDetail(
     val category: ErrorCategory,
-    val operation: String? = null,
+    val operation: OperationContext? = null,
     val line: Int? = null,
     val opcode: String? = null,
     val endpoint: NetworkEndpoint? = null,

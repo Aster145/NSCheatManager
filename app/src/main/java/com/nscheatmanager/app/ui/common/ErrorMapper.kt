@@ -23,7 +23,11 @@ import java.util.concurrent.CancellationException
 object ErrorMapper {
     fun map(error: Throwable, context: ErrorContext = ErrorContext()): UserMessage? {
         if (error is CancellationException) return null
-        val (resource, category) = when (error) {
+        val (resource, category) = if (context.operation == OperationContext.NOEXS &&
+            (error is ProtocolError || error is NoexsResultError)
+        ) {
+            R.string.error_noexs to ErrorCategory.NOEXS
+        } else when (error) {
             is ProtocolError.Timeout -> R.string.error_connection_timeout to ErrorCategory.CONNECTION
             is ProtocolError.Connection -> (if (error.hasCause<ConnectException>()) R.string.error_connection_refused else R.string.error_connection) to ErrorCategory.CONNECTION
             is ProtocolError.Disconnected -> R.string.error_disconnected to ErrorCategory.CONNECTION
@@ -49,7 +53,7 @@ object ErrorMapper {
             is NoLinkHandlerError -> R.string.qq_no_handler to ErrorCategory.LINK
             else -> R.string.operation_failed to ErrorCategory.UNKNOWN
         }
-        return UserMessage(resource, DiagnosticDetail(category, context.safeOperation(), endpoint = context.safeEndpoint()))
+        return UserMessage(resource, DiagnosticDetail(category, context.operation, endpoint = context.safeEndpoint()))
     }
 
     fun map(error: CheatValidationError): UserMessage {
@@ -99,7 +103,6 @@ object ErrorMapper {
         }, DiagnosticDetail(ErrorCategory.MEMORY),
     )
 
-    private fun ErrorContext.safeOperation() = operation?.takeIf { it.matches(Regex("[a-z][a-z0-9_]{0,47}")) }
     private fun ErrorContext.safeEndpoint() = endpoint?.takeIf {
         it.port in 1..65535 && it.host.split('.').let { parts ->
             parts.size == 4 && parts.all { part -> part.toIntOrNull()?.let { octet -> octet in 0..255 } == true }

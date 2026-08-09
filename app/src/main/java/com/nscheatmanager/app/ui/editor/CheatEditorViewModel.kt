@@ -34,6 +34,7 @@ import kotlinx.coroutines.CancellationException
 import com.nscheatmanager.app.ui.common.ErrorContext
 import com.nscheatmanager.app.ui.common.ErrorMapper
 import com.nscheatmanager.app.ui.common.UserMessage
+import com.nscheatmanager.app.ui.common.OperationContext
 
 enum class EditorTab { Cheat, Notes }
 
@@ -140,7 +141,7 @@ class CheatEditorViewModel(
                     if (generation != loadGeneration || mutableUiState.value.identity != identity) return@onFailure
                     mutableUiState.value = CheatEditorUiState()
                     scheduleDraftPersistence()
-                    reportError(it, "editor_load")
+                    reportError(it)
                 }
         }
     }
@@ -199,7 +200,7 @@ class CheatEditorViewModel(
                             effectChannel.trySend(EditorEffect.Saved(identity, saved))
                         } else {
                             mutableUiState.update { it.copy(isSaving = false) }
-                            reportError(com.nscheatmanager.app.protocol.ProtocolError.Timeout("editor_flush", java.io.IOException()), "editor_flush")
+                            reportError(com.nscheatmanager.app.protocol.ProtocolError.Timeout("editor_flush", java.io.IOException()))
                         }
                     }
             } catch (error: Throwable) {
@@ -214,7 +215,7 @@ class CheatEditorViewModel(
                 } else {
                     mutableUiState.update { it.copy(isSaving = false) }
                     scheduleDraftPersistence()
-                    reportError(error, "editor_save")
+                    reportError(error)
                 }
             }
         }
@@ -266,7 +267,7 @@ class CheatEditorViewModel(
                 true
             } ?: false
         }.getOrElse {
-            reportError(it, "editor_flush")
+            reportError(it)
             false
         }
 
@@ -292,16 +293,16 @@ class CheatEditorViewModel(
                 true
             } ?: false
         }.getOrElse {
-            reportError(it, "editor_close")
+            reportError(it)
             false
         }
         if (!completed) closing = false
         return completed
     }
 
-    private fun reportError(error: Throwable, operation: String) {
+    private fun reportError(error: Throwable) {
         if (error is CancellationException) throw error
-        ErrorMapper.map(error, ErrorContext(operation))?.let { effectChannel.trySend(EditorEffect.Error(it)) }
+        ErrorMapper.map(error, ErrorContext(OperationContext.EDITOR))?.let { effectChannel.trySend(EditorEffect.Error(it)) }
     }
 
     private suspend fun persistLatestDraftLocked() {

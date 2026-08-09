@@ -78,10 +78,11 @@ data class GameEffectActions(
     val zipDocument: (ByteArray) -> Unit,
     val confirmPending: (Long) -> Unit,
     val dismissPending: (Long) -> Unit,
+    val zipFailure: (Throwable) -> Unit,
     val externalFailure: (Throwable) -> Unit,
 ) {
     companion object {
-        val None = GameEffectActions({}, {}, {}, {})
+        val None = GameEffectActions({}, {}, {}, {}, {})
     }
 }
 
@@ -132,7 +133,7 @@ fun NSCheatManagerApp(
         if (uri != null) scope.launch {
             runCatching { withContext(Dispatchers.IO) { ZipDocumentReader(context).read(uri) } }
                 .onSuccess(gameEffectActions.zipDocument)
-                .onFailure(gameEffectActions.externalFailure)
+                .onFailure(gameEffectActions.zipFailure)
         }
     }
 

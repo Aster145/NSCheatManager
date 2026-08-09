@@ -2,6 +2,9 @@ package com.nscheatmanager.app.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -9,7 +12,9 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assert
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
@@ -17,6 +22,19 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import android.content.res.Configuration
+import androidx.test.core.app.ApplicationProvider
+import java.util.Locale
+import androidx.test.core.app.ActivityScenario
+import androidx.lifecycle.Lifecycle
+import com.nscheatmanager.app.MainActivity
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nscheatmanager.app.domain.ConnectionState
 import com.nscheatmanager.app.ui.game.GameScreen
@@ -30,7 +48,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FullFlowTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun editModeMenuExposesOneLabeledToggleState() {
         compose.setContent {
@@ -73,5 +91,104 @@ class FullFlowTest {
         }
         compose.onNodeWithTag("full-flow-320").assertIsDisplayed()
         compose.onNodeWithTag("device-selector").assertIsDisplayed()
+    }
+
+    @Test fun englishAllDestinationsRemainReachableAt320DpAndLargeFont() = verifyAllDestinations("en")
+    @Test fun chineseAllDestinationsRemainReachableAt320DpAndLargeFont() = verifyAllDestinations("zh-CN")
+
+    private fun verifyAllDestinations(languageTag: String) {
+        val base = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val configuration = Configuration(base.resources.configuration).apply {
+            setLocale(Locale.forLanguageTag(languageTag)); screenWidthDp = 320; fontScale = 1.5f
+        }
+        val localized = base.createConfigurationContext(configuration)
+        val editorOpen = mutableStateOf(true)
+        compose.setContent {
+            CompositionLocalProvider(
+                LocalContext provides localized,
+                LocalConfiguration provides configuration,
+                LocalActivityResultRegistryOwner provides compose.activity,
+            ) {
+                Box(Modifier.width(320.dp).testTag("localized-320")) {
+                    NSCheatManagerApp(
+                        settingsState = com.nscheatmanager.app.ui.settings.SettingsUiState(languageTag = languageTag),
+                        settingsActions = SettingsActions.None,
+                        versionName = "1",
+                        editorState = com.nscheatmanager.app.ui.editor.CheatEditorUiState(isOpen = editorOpen.value),
+                    )
+                }
+            }
+        }
+        compose.onNodeWithTag("cheat-editor").assertIsDisplayed()
+        compose.runOnIdle { editorOpen.value = false }
+        compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed()
+        compose.onNodeWithTag("nav-memory").performClick(); compose.onNodeWithTag("memory-screen").assertIsDisplayed()
+        compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
+        compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag("menu-settings").performClick()
+        compose.onNodeWithTag("settings-content").assertIsDisplayed()
+        compose.onNodeWithText(if (languageTag == "en") "Back" else "返回").performClick()
+        compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag("menu-about").performClick()
+        compose.onNodeWithText(if (languageTag == "en") "About" else "关于").assertIsDisplayed()
+        compose.onNodeWithTag("localized-320").assertIsDisplayed()
+    }
+
+    @Test fun productionActivityHarnessKeepsPendingAndNeverReplaysCommittedSideEffects() {
+        val harness = CountingLifecycleHarness()
+        MainActivity.contentFactoryForTest = harness
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                fun confirmStable(tag: String) {
+                    compose.onNodeWithTag(tag).performClick()
+                    scenario.recreate()
+                    compose.onNodeWithTag("confirm-$tag").assertIsDisplayed().performClick()
+                }
+                confirmStable("write")
+                compose.onNodeWithTag("freeze").performClick()
+                confirmStable("upload")
+                confirmStable("direct-upload")
+                confirmStable("import")
+                compose.onNodeWithTag("share").performClick()
+                scenario.moveToState(Lifecycle.State.CREATED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                scenario.recreate()
+                compose.runOnIdle {
+                    check(harness.writeCount == 1 && harness.freezeCount == 1)
+                    check(harness.uploadCount == 1 && harness.directUploadCount == 1)
+                    check(harness.importCount == 1 && harness.shareCount == 1)
+                }
+            }
+            check(harness.closeCount == 1)
+        } finally {
+            MainActivity.contentFactoryForTest = null
+        }
+    }
+
+    private class CountingLifecycleHarness : MainActivity.ContentFactory {
+        var writeCount = 0; var freezeCount = 0; var uploadCount = 0; var directUploadCount = 0
+        var importCount = 0; var shareCount = 0; var closeCount = 0
+
+        @androidx.compose.runtime.Composable override fun Content() {
+            var pending by rememberSaveable { mutableStateOf<String?>(null) }
+            Column {
+                listOf("write", "upload", "direct-upload", "import").forEach { action ->
+                    Button({ pending = action }, Modifier.testTag(action)) { Text(action) }
+                }
+                Button({ freezeCount++ }, Modifier.testTag("freeze")) { Text("freeze") }
+                Button({ shareCount++ }, Modifier.testTag("share")) { Text("share") }
+                pending?.let { action ->
+                    Button({
+                        when (action) {
+                            "write" -> writeCount++
+                            "upload" -> uploadCount++
+                            "direct-upload" -> directUploadCount++
+                            "import" -> importCount++
+                        }
+                        pending = null
+                    }, Modifier.testTag("confirm-$action")) { Text("confirm") }
+                }
+            }
+        }
+
+        override fun close() { closeCount++ }
     }
 }

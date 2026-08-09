@@ -43,6 +43,7 @@ import com.nscheatmanager.app.ui.common.ErrorContext
 import com.nscheatmanager.app.ui.common.ErrorMapper
 import com.nscheatmanager.app.ui.common.NetworkEndpoint
 import com.nscheatmanager.app.ui.common.UserMessage
+import com.nscheatmanager.app.ui.common.OperationContext
 import kotlinx.coroutines.runBlocking
 
 data class CheatGroupUiState(
@@ -244,7 +245,10 @@ class GameViewModel private constructor(
     fun onDeviceSelected(deviceId: String) {
         val profile = mutableUiState.value.devices.firstOrNull { it.id == deviceId } ?: return
         mutableUiState.update { it.copy(selectedDeviceId = deviceId) }
-        viewModelScope.launch { runCatching { devices.selectDevice(deviceId) }.onFailure(::showFailure) }
+        viewModelScope.launch {
+            runCatching { devices.selectDevice(deviceId) }
+                .onFailure { showFailure(it, OperationContext.SETTINGS) }
+        }
         if (sessionState.device?.id != deviceId && sessionState.connection in setOf(
                 ConnectionState.Connecting,
                 ConnectionState.Recognizing,
@@ -275,9 +279,14 @@ class GameViewModel private constructor(
 
     fun onDetachDmntRequested() {
         viewModelScope.launch {
-            runCatching { session.detachDmnt() }
-                .onSuccess { effectChannel.trySend(GameEffect.Message(GameMessage.DETACH_COMPLETE)) }
-                .onFailure { showFailure(it) }
+            try {
+                session.detachDmnt()
+                effectChannel.trySend(GameEffect.Message(GameMessage.DETACH_COMPLETE))
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                showNoexsFailure(error)
+            }
         }
     }
 
@@ -370,12 +379,12 @@ class GameViewModel private constructor(
                 }
                 .onSuccess { inspection ->
                     if (key.titleId != inspection.titleId || key.buildId != inspection.buildId) {
-                        showFailure(IllegalArgumentException("ZIP TID/BID does not match the current recognized game"))
+                        showFailure(IllegalArgumentException("ZIP TID/BID does not match the current recognized game"), OperationContext.ZIP)
                     } else {
                         setConfirmation { id -> GameConfirmation.ZipImport(id, key, inspection) }
                     }
                 }
-                .onFailure { showFailure(it) }
+                .onFailure { showFailure(it, OperationContext.ZIP) }
         }
     }
 
@@ -394,7 +403,7 @@ class GameViewModel private constructor(
                 }?.let { reloadLocal(key, it) }
             }.onSuccess {
                 effectChannel.trySend(GameEffect.Message(GameMessage.IMPORT_COMPLETE))
-            }.onFailure { showFailure(it) }
+            }.onFailure { showFailure(it, OperationContext.ZIP) }
         }
     }
 
@@ -432,7 +441,7 @@ class GameViewModel private constructor(
             runCatching { files.previewUpload(profile, identity) { session.requireCurrentOperationKey(key) } }
                 .mapCatching { preview -> session.requireCurrentOperationKey(key); preview }
                 .onSuccess { preview -> setConfirmation { id -> GameConfirmation.Upload(id, key, preview) } }
-                .onFailure { showFailure(it) }
+                .onFailure { showFailure(it, OperationContext.FTP) }
         }
     }
 
@@ -450,7 +459,7 @@ class GameViewModel private constructor(
                     if (exists) exportZip(key, identity, false)
                     else setConfirmation { id -> GameConfirmation.EmptyNotesShare(id, key) }
                 }
-                .onFailure { showFailure(it) }
+                .onFailure { showFailure(it, OperationContext.ZIP) }
         }
     }
 
@@ -470,7 +479,11 @@ class GameViewModel private constructor(
     }
 
     fun onExternalFailure(error: Throwable) {
-        showFailure(error)
+        showFailure(error, OperationContext.SHARE)
+    }
+
+    fun onZipExternalFailure(error: Throwable) {
+        showFailure(error, OperationContext.ZIP)
     }
 
     fun confirmPending(id: Long) {
@@ -532,7 +545,7 @@ class GameViewModel private constructor(
                         -> error("Unexpected download report: $report")
                     }
                 }
-                .onFailure { showFailure(it) }
+                .onFailure { showFailure(it, OperationContext.FTP) }
         }
     }
 
@@ -559,7 +572,7 @@ class GameViewModel private constructor(
                         else -> error("Unexpected upload report: $report")
                     }
                 }
-                .onFailure { showFailure(it) }
+                .onFailure { showFailure(it, OperationContext.FTP) }
         }
     }
 
@@ -577,7 +590,7 @@ class GameViewModel private constructor(
                     GameEffect.Share(ShareArchive("${identity.titleId.hex}_${identity.buildId.hex}.zip", bytes)),
                 )
             }
-            .onFailure { showFailure(it) }
+            .onFailure { showFailure(it, OperationContext.ZIP) }
     }
 
     private suspend fun reloadLocal(key: GameOperationKey, identity: GameIdentity) {
@@ -682,16 +695,24 @@ class GameViewModel private constructor(
     }
     private fun readyIdentity(): GameIdentity? = sessionState.game?.takeIf { sessionState.gameValidated }
 
-    private fun showFailure(error: Throwable) {
+    private fun showFailure(error: Throwable, operation: OperationContext = OperationContext.SYSBOT) {
         val device = selectedProfile()
+        val port = when (operation) {
+            OperationContext.SYSBOT, OperationContext.MEMORY -> device?.sysBotPort
+            OperationContext.NOEXS -> device?.noexsPort
+            OperationContext.FTP -> device?.ftpPort
+            else -> null
+        }
         ErrorMapper.map(
             error,
             ErrorContext(
-                operation = "game",
-                endpoint = device?.let { NetworkEndpoint(it.host, it.sysBotPort) },
+                operation = OperationContext.SYSBOT,
+                endpoint = port?.let { NetworkEndpoint(requireNotNull(device).host, it) },
             ),
         )?.let { effectChannel.trySend(GameEffect.UserError(it)) }
     }
+
+    private fun showNoexsFailure(error: Throwable) = showFailure(error, OperationContext.NOEXS)
 
     private fun setConfirmation(create: (Long) -> GameConfirmation) {
         synchronized(confirmationLock) {

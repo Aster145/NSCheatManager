@@ -24,6 +24,9 @@ import com.nscheatmanager.app.protocol.ftp.FtpConnectionError
 import com.nscheatmanager.app.protocol.ftp.FtpReplyError
 import com.nscheatmanager.app.protocol.ftp.FtpRollbackError
 import com.nscheatmanager.app.protocol.ftp.FtpTimeoutError
+import com.nscheatmanager.app.protocol.ftp.FtpSizeLimitError
+import com.nscheatmanager.app.protocol.ftp.FtpVerificationError
+import com.nscheatmanager.app.protocol.ftp.FtpTransferError
 import com.nscheatmanager.app.protocol.noexs.NoexsResultError
 import java.net.ConnectException
 import java.util.concurrent.CancellationException
@@ -33,7 +36,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ErrorMapperTest {
-    private val endpoint = ErrorContext("read memory", NetworkEndpoint("192.168.1.35", 6000))
+    private val endpoint = ErrorContext(OperationContext.SYSBOT, NetworkEndpoint("192.168.1.35", 6000))
 
     @Test fun mapsProtocolFailuresWithoutLeakingPayloads() {
         assertMessage(ProtocolError.Timeout("read", Exception("secret")), R.string.error_connection_timeout)
@@ -91,11 +94,54 @@ class ErrorMapperTest {
     @Test fun stripsUntrustedOperationAndEndpointContext() {
         val mapped = ErrorMapper.map(
             IllegalStateException("PASSWORD=secret"),
-            ErrorContext("upload\nSECRET", NetworkEndpoint("user:pass@example.com", 70000)),
+            ErrorContext(OperationContext.FTP, NetworkEndpoint("user:pass@example.com", 70000)),
         )!!
-        assertNull(mapped.detail.operation)
+        assertEquals(OperationContext.FTP, mapped.detail.operation)
         assertNull(mapped.detail.endpoint)
         assertFalse(mapped.toString().contains("PASSWORD"))
+    }
+
+    @Test fun noexsContextOverridesEveryTransportFailureAndRetainsOnlyNoexsEndpoint() {
+        val context = ErrorContext(OperationContext.NOEXS, NetworkEndpoint("192.168.1.35", 7331))
+        listOf<Throwable>(
+            ProtocolError.Connection(ConnectException()), ProtocolError.Timeout("detach", Exception()),
+            ProtocolError.Disconnected(), ProtocolError.MalformedResponse("secret"), NoexsResultError(1, 2, 3),
+        ).forEach {
+            val mapped = requireNotNull(ErrorMapper.map(it, context))
+            assertEquals(R.string.error_noexs, mapped.messageRes)
+            assertEquals(ErrorCategory.NOEXS, mapped.detail.category)
+            assertEquals(7331, mapped.detail.endpoint?.port)
+        }
+    }
+
+    @Test fun exhaustivelyMapsCurrentProtocolAndFtpSubtypes() {
+        val cases = listOf(
+            ProtocolError.Disconnected() to R.string.error_disconnected,
+            ProtocolError.ResponseTooLarge(1) to R.string.error_protocol_limit,
+            ProtocolError.CommandTooLarge(1, 2) to R.string.error_protocol_limit,
+            FtpReplyError("LIST", 500, "safe") to R.string.error_ftp_reply,
+            FtpSizeLimitError(1) to R.string.error_ftp_size,
+            FtpVerificationError("secret") to R.string.error_ftp_transfer,
+            FtpTransferError("secret") to R.string.error_ftp_transfer,
+        )
+        cases.forEach { (error, resource) -> assertEquals(resource, ErrorMapper.map(error, endpoint)?.messageRes) }
+    }
+
+    @Test fun exhaustivelyMapsCurrentCheatValidationSubtypes() {
+        val errors = listOf<CheatValidationError>(
+            CheatValidationError.UnsupportedOpcode(1, 8),
+            CheatValidationError.UnsupportedForm(2, "secret"),
+            CheatValidationError.UnsupportedMemoryRegion(3, 9),
+            CheatValidationError.ArithmeticOverflow(4),
+            CheatValidationError.InstructionLimitExceeded(5, 1),
+            CheatValidationError.IoLimitExceeded(6, 1),
+        )
+        errors.forEach { error ->
+            val mapped = ErrorMapper.map(error)
+            assertEquals(ErrorCategory.EXECUTION, mapped.detail.category)
+            assertEquals(error.line, mapped.detail.line)
+            assertFalse(mapped.toString().contains("secret"))
+        }
     }
 
     private fun DeviceEditorError.stringResourceForTest() = when (this) {
