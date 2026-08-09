@@ -65,7 +65,7 @@ class CommonsNetSwitchFtp(
             "Notes content exceeds the FTP file limit"
         }
         return withClient { client ->
-            ensureRemoteDirectories(client, titleId, buildId, includeNotes = files.notes != null)
+            ensureRemoteDirectories(client, titleId)
             val entries = buildList {
                 add(UploadEntry(RemotePaths.cheat(titleId, buildId), files.cheat))
                 files.notes?.let { add(UploadEntry(RemotePaths.notes(titleId, buildId), it)) }
@@ -319,15 +319,12 @@ class CommonsNetSwitchFtp(
     private fun ensureRemoteDirectories(
         client: FTPClient,
         titleId: TitleId,
-        buildId: BuildId,
-        includeNotes: Boolean,
     ) {
         val directories = buildList {
-            add("/atmosphere")
-            add("/atmosphere/contents")
-            add("/atmosphere/contents/${titleId.hex}")
-            add("/atmosphere/contents/${titleId.hex}/cheats")
-            if (includeNotes) add("/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}")
+            add("/sdmc:/switch")
+            add("/sdmc:/switch/breeze")
+            add("/sdmc:/switch/breeze/cheats")
+            add("/sdmc:/switch/breeze/cheats/${titleId.hex}")
         }
         directories.forEach { directory ->
             if (!client.makeDirectory(directory) && !client.changeWorkingDirectory(directory)) {
@@ -538,10 +535,10 @@ class CommonsNetSwitchFtp(
 
     private object RemotePaths {
         fun cheat(titleId: TitleId, buildId: BuildId): String =
-            "/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}.txt"
+            "/sdmc:/switch/breeze/cheats/${titleId.hex}/${buildId.hex}.txt"
 
-        fun notes(titleId: TitleId, buildId: BuildId): String =
-            "/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt"
+        fun notes(titleId: TitleId, @Suppress("UNUSED_PARAMETER") buildId: BuildId): String =
+            "/sdmc:/switch/breeze/cheats/${titleId.hex}/notes.txt"
     }
 
     companion object {

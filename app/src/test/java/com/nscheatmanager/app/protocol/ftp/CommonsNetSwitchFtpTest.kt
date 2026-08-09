@@ -30,8 +30,8 @@ import org.junit.Test
 class CommonsNetSwitchFtpTest {
     private val titleId = TitleId.parse("0100F2C0115B6000")
     private val buildId = BuildId.parse("A4A8D3E7F29C81A2")
-    private val cheatPath = "/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}.txt"
-    private val notesPath = "/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}/notes.txt"
+    private val cheatPath = "/sdmc:/switch/breeze/cheats/${titleId.hex}/${buildId.hex}.txt"
+    private val notesPath = "/sdmc:/switch/breeze/cheats/${titleId.hex}/notes.txt"
     private val cheat = "[Money]\n04000000 00112233 00000063\n".toByteArray()
 
     @Test
@@ -99,7 +99,7 @@ class CommonsNetSwitchFtpTest {
         assertTrue(server.commands.any { it == "SIZE $cheatPath" })
         assertTrue(server.retrievedPaths.count { it == cheatPath } >= 2)
         assertFalse(server.files.keys.any { ".nscheatmanager-" in it })
-        assertTrue(server.createdDirectories.contains("/atmosphere/contents/${titleId.hex}/cheats/${buildId.hex}"))
+        assertTrue(server.createdDirectories.contains("/sdmc:/switch/breeze/cheats/${titleId.hex}"))
     } }
 
     @Test
