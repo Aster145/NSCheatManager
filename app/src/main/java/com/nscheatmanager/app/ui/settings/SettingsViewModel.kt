@@ -175,12 +175,10 @@ class SettingsViewModel(
     }
 
     class Factory(
-        deviceRepository: DeviceRepository,
-        appPreferences: AppPreferences,
+        private val devices: DeviceSettingsRepository,
+        private val preferences: LanguagePreferenceStore,
         applyLocale: (String) -> Unit,
     ) : ViewModelProvider.Factory {
-        private val devices = DeviceRepositoryAdapter(deviceRepository)
-        private val preferences = AppPreferencesAdapter(appPreferences)
         private val localeApplier = applyLocale
 
         @Suppress("UNCHECKED_CAST")
@@ -191,7 +189,7 @@ class SettingsViewModel(
     }
 }
 
-private class DeviceRepositoryAdapter(private val delegate: DeviceRepository) : DeviceSettingsRepository {
+class DeviceRepositoryAdapter(private val delegate: DeviceRepository) : DeviceSettingsRepository {
     override val devices: Flow<List<DeviceProfile>> = delegate.observeDevices()
 
     override suspend fun addDevice(
@@ -207,7 +205,7 @@ private class DeviceRepositoryAdapter(private val delegate: DeviceRepository) : 
     override suspend fun setDefaultDevice(deviceId: String) = delegate.setDefaultDevice(deviceId)
 }
 
-private class AppPreferencesAdapter(private val delegate: AppPreferences) : LanguagePreferenceStore {
+class AppPreferencesAdapter(private val delegate: AppPreferences) : LanguagePreferenceStore {
     override val languageTag: Flow<String> = delegate.languageTag
     override suspend fun setLanguageTag(languageTag: String) = delegate.setLanguageTag(languageTag)
 }

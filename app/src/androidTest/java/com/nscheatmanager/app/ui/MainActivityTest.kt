@@ -30,10 +30,10 @@ class MainActivityTest {
 
     @After fun restoreGlobalState() = runBlocking {
         val dependencies = (compose.activity.application as NSCheatManagerApplication).dependencies
-        createdDeviceIds.forEach { dependencies.devices.deleteDevice(it) }
-        dependencies.preferences.setLanguageTag("zh-CN")
+        createdDeviceIds.forEach { dependencies.deviceRepository.deleteDevice(it) }
+        dependencies.appPreferences.setLanguageTag("zh-CN")
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"))
-        MainActivity.contentFactoryForTest = null
+        MainActivity.dependenciesForTest = null
     }
 
     @Test
@@ -82,9 +82,9 @@ class MainActivityTest {
     @Test fun selectedDeviceAndLanguagePersistAcrossProductionActivityRecreation() {
         val dependencies = (compose.activity.application as NSCheatManagerApplication).dependencies
         val device = runBlocking {
-            dependencies.devices.addDevice("Lifecycle Switch", "192.168.77.35").also {
-                dependencies.devices.selectDevice(it.id)
-                dependencies.preferences.setLanguageTag("en")
+            dependencies.deviceRepository.addDevice("Lifecycle Switch", "192.168.77.35").also {
+                dependencies.deviceRepository.selectDevice(it.id)
+                dependencies.appPreferences.setLanguageTag("en")
             }
         }
         createdDeviceIds += device.id

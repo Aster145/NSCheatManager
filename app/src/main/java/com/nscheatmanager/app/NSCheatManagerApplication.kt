@@ -23,6 +23,22 @@ import com.nscheatmanager.app.ui.game.MirrorGameFileGateway
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import com.nscheatmanager.app.ui.settings.DeviceSettingsRepository
+import com.nscheatmanager.app.ui.settings.LanguagePreferenceStore
+import com.nscheatmanager.app.ui.settings.DeviceRepositoryAdapter
+import com.nscheatmanager.app.ui.settings.AppPreferencesAdapter
+import com.nscheatmanager.app.ui.game.GameDeviceStore
+import com.nscheatmanager.app.ui.game.GameSessionGateway
+import com.nscheatmanager.app.data.files.EditorDraftStore
+
+interface MainActivityDependencies {
+    val preferences: LanguagePreferenceStore
+    val devices: DeviceSettingsRepository
+    val gameDevices: GameDeviceStore
+    val gameFiles: GameFileGateway
+    val editorDrafts: EditorDraftStore
+    fun createGameSession(scope: CoroutineScope): GameSessionGateway
+}
 
 class NSCheatManagerApplication : Application() {
     val dependencies: AppDependencies by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -30,22 +46,24 @@ class NSCheatManagerApplication : Application() {
     }
 }
 
-class AppDependencies(application: Application) {
-    val preferences = AppPreferences.create(application)
+class AppDependencies(application: Application) : MainActivityDependencies {
+    val appPreferences = AppPreferences.create(application)
     private val database = AppDatabase.create(application)
-    val devices = DeviceRepository(database, preferences)
-    val gameDevices = DeviceRepositoryGameStore(devices)
+    val deviceRepository = DeviceRepository(database, appPreferences)
+    override val preferences: LanguagePreferenceStore = AppPreferencesAdapter(appPreferences)
+    override val devices: DeviceSettingsRepository = DeviceRepositoryAdapter(deviceRepository)
+    override val gameDevices = DeviceRepositoryGameStore(deviceRepository)
     private val mirror = CheatMirror(File(application.filesDir, "cheat-mirror"))
     private val zipService = CheatZipService(mirror, File(application.cacheDir, "zip-work").toPath())
     private val synchronization = SyncCurrentGameFiles(
         mirror,
         File(application.cacheDir, "ftp-staging").toPath(),
     )
-    val gameFiles: GameFileGateway = MirrorGameFileGateway(mirror, zipService, synchronization)
-    val editorDrafts = FileEditorDraftStore(File(application.cacheDir, "editor-drafts").toPath())
+    override val gameFiles: GameFileGateway = MirrorGameFileGateway(mirror, zipService, synchronization)
+    override val editorDrafts = FileEditorDraftStore(File(application.cacheDir, "editor-drafts").toPath())
 
-    fun createGameSession(scope: CoroutineScope): DeviceSessionGateway {
-        val persistence = DeviceRepositorySessionPersistence(devices)
+    override fun createGameSession(scope: CoroutineScope): DeviceSessionGateway {
+        val persistence = DeviceRepositorySessionPersistence(deviceRepository)
         return DeviceSessionGateway(
             DeviceSession(
                 scope = scope,

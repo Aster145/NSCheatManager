@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -27,6 +28,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import android.content.res.Configuration
@@ -102,11 +105,13 @@ class FullFlowTest {
             setLocale(Locale.forLanguageTag(languageTag)); screenWidthDp = 320; fontScale = 1.5f
         }
         val localized = base.createConfigurationContext(configuration)
+        val density = localized.resources.displayMetrics.density
         val editorOpen = mutableStateOf(true)
         compose.setContent {
             CompositionLocalProvider(
                 LocalContext provides localized,
                 LocalConfiguration provides configuration,
+                LocalDensity provides Density(density, 1.5f),
                 LocalActivityResultRegistryOwner provides compose.activity,
             ) {
                 Box(Modifier.width(320.dp).testTag("localized-320")) {
@@ -120,9 +125,11 @@ class FullFlowTest {
             }
         }
         compose.onNodeWithTag("cheat-editor").assertIsDisplayed()
+        assertInside320("cheat-editor")
+        assertInside320("editor-save")
         compose.runOnIdle { editorOpen.value = false }
-        compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed()
-        compose.onNodeWithTag("nav-memory").performClick(); compose.onNodeWithTag("memory-screen").assertIsDisplayed()
+        compose.onNodeWithTag("nav-game").performClick(); compose.onNodeWithTag("game-screen").assertIsDisplayed(); assertInside320("device-selector"); assertInside320("overflow-menu")
+        compose.onNodeWithTag("nav-memory").performClick(); compose.onNodeWithTag("memory-screen").assertIsDisplayed(); assertInside320("memory-action-row")
         compose.onNodeWithTag("nav-cheats").performClick(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
         compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
@@ -132,63 +139,72 @@ class FullFlowTest {
         compose.onNodeWithTag("localized-320").assertIsDisplayed()
     }
 
-    @Test fun productionActivityHarnessKeepsPendingAndNeverReplaysCommittedSideEffects() {
-        val harness = CountingLifecycleHarness()
-        MainActivity.contentFactoryForTest = harness
+    private fun assertInside320(tag: String) {
+        val root = compose.onNodeWithTag("localized-320").fetchSemanticsNode().boundsInRoot
+        val child = compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+        check(child.left >= root.left && child.right <= root.right) { "$tag exceeds 320dp root: $child vs $root" }
+    }
+
+    @Test fun injectedDependenciesStillExerciseNormalProductionCompositionAndLifecycle() {
+        val application = ApplicationProvider.getApplicationContext<com.nscheatmanager.app.NSCheatManagerApplication>()
+        val session = CountingSessionGateway()
+        MainActivity.dependenciesForTest = object : com.nscheatmanager.app.MainActivityDependencies by application.dependencies {
+            override fun createGameSession(scope: kotlinx.coroutines.CoroutineScope) = session
+        }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                fun confirmStable(tag: String) {
-                    compose.onNodeWithTag(tag).performClick()
-                    scenario.recreate()
-                    compose.onNodeWithTag("confirm-$tag").assertIsDisplayed().performClick()
-                }
-                confirmStable("write")
-                compose.onNodeWithTag("freeze").performClick()
-                confirmStable("upload")
-                confirmStable("direct-upload")
-                confirmStable("import")
-                compose.onNodeWithTag("share").performClick()
+                compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
+                compose.onNodeWithTag("nav-memory").performClick()
+                compose.onNodeWithTag("memory-screen").assertIsDisplayed()
+                compose.onNodeWithTag("memory-address").performTextInput("20")
+                compose.onNodeWithTag("memory-value").performTextInput("7")
+                compose.onNodeWithTag("memory-write").performClick()
+                compose.onNodeWithTag("memory-confirm").performClick()
+                compose.waitUntil(5_000) { session.writeCount == 1 }
+                compose.onNodeWithTag("memory-lock").performClick()
+                compose.waitUntil(5_000) { session.lockCount == 1 }
                 scenario.moveToState(Lifecycle.State.CREATED)
                 scenario.moveToState(Lifecycle.State.RESUMED)
                 scenario.recreate()
-                compose.runOnIdle {
-                    check(harness.writeCount == 1 && harness.freezeCount == 1)
-                    check(harness.uploadCount == 1 && harness.directUploadCount == 1)
-                    check(harness.importCount == 1 && harness.shareCount == 1)
-                }
+                compose.onNodeWithTag("memory-screen").assertIsDisplayed()
             }
-            check(harness.closeCount == 1)
+            compose.runOnIdle { check(session.writeCount == 1 && session.lockCount == 1 && session.closeCount == 1) }
         } finally {
-            MainActivity.contentFactoryForTest = null
+            MainActivity.dependenciesForTest = null
         }
     }
 
-    private class CountingLifecycleHarness : MainActivity.ContentFactory {
-        var writeCount = 0; var freezeCount = 0; var uploadCount = 0; var directUploadCount = 0
-        var importCount = 0; var shareCount = 0; var closeCount = 0
-
-        @androidx.compose.runtime.Composable override fun Content() {
-            var pending by rememberSaveable { mutableStateOf<String?>(null) }
-            Column {
-                listOf("write", "upload", "direct-upload", "import").forEach { action ->
-                    Button({ pending = action }, Modifier.testTag(action)) { Text(action) }
-                }
-                Button({ freezeCount++ }, Modifier.testTag("freeze")) { Text("freeze") }
-                Button({ shareCount++ }, Modifier.testTag("share")) { Text("share") }
-                pending?.let { action ->
-                    Button({
-                        when (action) {
-                            "write" -> writeCount++
-                            "upload" -> uploadCount++
-                            "direct-upload" -> directUploadCount++
-                            "import" -> importCount++
-                        }
-                        pending = null
-                    }, Modifier.testTag("confirm-$action")) { Text("confirm") }
-                }
-            }
+    private class CountingSessionGateway : com.nscheatmanager.app.ui.game.GameSessionGateway {
+        private val device = com.nscheatmanager.app.domain.DeviceProfile("activity-fake", "Fake Switch", "192.168.1.40")
+        private val identity = com.nscheatmanager.app.protocol.sysbot.GameIdentity(
+            com.nscheatmanager.app.core.model.TitleId.parse("0100F2C0115B6000"),
+            com.nscheatmanager.app.core.model.BuildId.parse("A4A8D3E7F29C81A2"), 0x1000u, 0x8000u,
+        )
+        override val state = kotlinx.coroutines.flow.MutableStateFlow(com.nscheatmanager.app.domain.DeviceSessionState(
+            device = device, connection = com.nscheatmanager.app.domain.ConnectionState.Ready,
+            game = identity, gameValidated = true, generation = 1,
+        ))
+        var writeCount = 0
+        var lockCount = 0
+        var closeCount = 0
+        override fun connectAndRecognize(device: com.nscheatmanager.app.domain.DeviceProfile) = Unit
+        override fun switchDevice(device: com.nscheatmanager.app.domain.DeviceProfile) = Unit
+        override fun disconnect() = Unit
+        override fun recognizeAgain() = Unit
+        override suspend fun detachDmnt() = Unit
+        override fun currentOperationKey() = state.value.operationKey
+        override fun requireCurrentOperationKey(expected: com.nscheatmanager.app.domain.GameOperationKey) = Unit
+        override suspend fun executeGroup(expected: com.nscheatmanager.app.domain.GameOperationKey, group: com.nscheatmanager.app.cheats.parser.CheatGroup) =
+            com.nscheatmanager.app.cheats.vm.ExecutionReport(com.nscheatmanager.app.cheats.vm.ExecutionStatus.Complete, 1)
+        override suspend fun uncheckGroup(expected: com.nscheatmanager.app.domain.GameOperationKey, groupName: String) = Unit
+        override suspend fun writeMemory(expected: com.nscheatmanager.app.domain.GameOperationKey, target: com.nscheatmanager.app.core.model.MemoryTarget, type: com.nscheatmanager.app.core.model.ValueType, bytes: ByteArray) { writeCount++ }
+        override suspend fun lockMemory(expected: com.nscheatmanager.app.domain.GameOperationKey, target: com.nscheatmanager.app.core.model.MemoryTarget, type: com.nscheatmanager.app.core.model.ValueType, bytes: ByteArray): com.nscheatmanager.app.domain.LockedValue {
+            lockCount++
+            val lock = com.nscheatmanager.app.domain.LockedValue(target, 0x20u, type, com.nscheatmanager.app.domain.ImmutableBytes.copyOf(bytes))
+            state.value = state.value.copy(activeLocks = mapOf(lock.absoluteAddress to lock))
+            return lock
         }
-
-        override fun close() { closeCount++ }
+        override suspend fun close() { closeCount++ }
     }
+
 }

@@ -375,6 +375,7 @@ class GameViewModelTest {
         private val executeRelease: CompletableDeferred<Unit> = CompletableDeferred(Unit),
         private val acknowledgeExecution: Boolean = true,
         private val executionReport: ExecutionReport = ExecutionReport(ExecutionStatus.Complete, completedWrites = 1),
+        private val detachFailure: Throwable? = null,
     ) : GameSessionGateway {
         override val state = MutableStateFlow(DeviceSessionState())
         val connects = mutableListOf<DeviceProfile>()
@@ -389,7 +390,7 @@ class GameViewModelTest {
         override fun switchDevice(device: DeviceProfile) = Unit
         override fun disconnect() = Unit
         override fun recognizeAgain() { manualRecognitions++ }
-        override suspend fun detachDmnt() = Unit
+        override suspend fun detachDmnt() { detachFailure?.let { throw it } }
 
         override fun currentOperationKey(): GameOperationKey? = state.value.operationKey
 
@@ -418,6 +419,7 @@ class GameViewModelTest {
 
     private class FakeGameFileGateway(
         private val downloadRelease: CompletableDeferred<Unit> = CompletableDeferred(Unit),
+        private val previewUploadFailure: Throwable? = null,
         private val notesExist: Boolean = true,
         private val downloadReports: ArrayDeque<TransferReport> = ArrayDeque(
             listOf(
@@ -475,8 +477,10 @@ class GameViewModelTest {
         override suspend fun discardDownload(confirmation: DownloadOverwriteConfirmation) {
             discardDownloads++
         }
-        override suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity, checkpoint: () -> Unit) =
-            UploadPreview(UploadConfirmation("upload"), 0, null).also { checkpoint() }
+        override suspend fun previewUpload(profile: DeviceProfile, identity: GameIdentity, checkpoint: () -> Unit): UploadPreview {
+            previewUploadFailure?.let { throw it }
+            return UploadPreview(UploadConfirmation("upload"), 0, null).also { checkpoint() }
+        }
 
         override suspend fun upload(
             confirmation: UploadConfirmation,
@@ -498,6 +502,61 @@ class GameViewModelTest {
         val message = effect.await() as GameEffect.UserError
         assertEquals(com.nscheatmanager.app.R.string.error_malformed_response, message.message.messageRes)
         assertFalse(message.message.detail.toString().contains("SECRET_PAYLOAD"))
+    }
+
+    @Test
+    fun detachTransportFailuresUseNoexsContextAndPort() = runTest(dispatcher) {
+        val failures = listOf(
+            ProtocolError.Connection(java.io.IOException()), ProtocolError.Timeout("detach", java.io.IOException()),
+            ProtocolError.Disconnected(), ProtocolError.MalformedResponse("secret"),
+        )
+        failures.forEach { failure ->
+            val viewModel = GameViewModel(
+                FakeDeviceStore(listOf(DEVICE), DEVICE.id),
+                FakeSessionGateway(detachFailure = failure),
+                FakeGameFileGateway(),
+            )
+            advanceUntilIdle()
+            val effect = async(start = CoroutineStart.UNDISPATCHED) { viewModel.effects.first() }
+            viewModel.onDetachDmntRequested()
+            advanceUntilIdle()
+            val message = (effect.await() as GameEffect.UserError).message
+            assertEquals(com.nscheatmanager.app.R.string.error_noexs, message.messageRes)
+            assertEquals(com.nscheatmanager.app.ui.common.OperationContext.NOEXS, message.detail.operation)
+            assertEquals(DEVICE.noexsPort, message.detail.endpoint?.port)
+        }
+    }
+
+    @Test
+    fun zipAndShareFailuresNeverIncludeNetworkEndpoint() = runTest(dispatcher) {
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), FakeSessionGateway(), FakeGameFileGateway())
+        advanceUntilIdle()
+        for ((invoke, operation) in listOf(
+            ({ viewModel.onZipExternalFailure(IllegalStateException("zip")) }) to com.nscheatmanager.app.ui.common.OperationContext.ZIP,
+            ({ viewModel.onExternalFailure(IllegalStateException("share")) }) to com.nscheatmanager.app.ui.common.OperationContext.SHARE,
+        )) {
+            val effect = async(start = CoroutineStart.UNDISPATCHED) { viewModel.effects.first() }
+            invoke()
+            val message = (effect.await() as GameEffect.UserError).message
+            assertEquals(operation, message.detail.operation)
+            assertNull(message.detail.endpoint)
+        }
+    }
+
+    @Test
+    fun uploadFailureUsesFtpContextAndConfiguredPort() = runTest(dispatcher) {
+        val session = FakeSessionGateway().apply { state.value = readyState(CheatFile(emptyList(), emptyList())) }
+        val viewModel = GameViewModel(
+            FakeDeviceStore(listOf(DEVICE), DEVICE.id), session,
+            FakeGameFileGateway(previewUploadFailure = com.nscheatmanager.app.protocol.ftp.FtpConnectionError("offline")),
+        )
+        advanceUntilIdle()
+        val effect = async(start = CoroutineStart.UNDISPATCHED) { viewModel.effects.first() }
+        viewModel.onUploadRequested()
+        advanceUntilIdle()
+        val message = (effect.await() as GameEffect.UserError).message
+        assertEquals(com.nscheatmanager.app.ui.common.OperationContext.FTP, message.detail.operation)
+        assertEquals(DEVICE.ftpPort, message.detail.endpoint?.port)
     }
 
     private companion object {

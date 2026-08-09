@@ -706,7 +706,7 @@ class GameViewModel private constructor(
         ErrorMapper.map(
             error,
             ErrorContext(
-                operation = OperationContext.SYSBOT,
+                operation = operation,
                 endpoint = port?.let { NetworkEndpoint(requireNotNull(device).host, it) },
             ),
         )?.let { effectChannel.trySend(GameEffect.UserError(it)) }

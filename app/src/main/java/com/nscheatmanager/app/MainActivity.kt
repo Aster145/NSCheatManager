@@ -6,8 +6,8 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -30,15 +30,10 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
-    interface ContentFactory {
-        @Composable fun Content()
-        fun close() = Unit
-    }
-
     companion object {
-        @Volatile var contentFactoryForTest: ContentFactory? = null
+        @Volatile var dependenciesForTest: MainActivityDependencies? = null
     }
-    private val dependencies get() = (application as NSCheatManagerApplication).dependencies
+    private val dependencies get() = dependenciesForTest ?: (application as NSCheatManagerApplication).dependencies
     private val settingsViewModel by viewModels<SettingsViewModel> {
         SettingsViewModel.Factory(dependencies.devices, dependencies.preferences, ::applyLocale)
     }
@@ -56,10 +51,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        contentFactoryForTest?.let { factory ->
-            setContent { NSCheatManagerTheme { factory.Content() } }
-            return
-        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 dependencies.preferences.languageTag.collect(::applyLocale)
@@ -156,7 +147,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (isFinishing) contentFactoryForTest?.close()
         super.onDestroy()
     }
 
