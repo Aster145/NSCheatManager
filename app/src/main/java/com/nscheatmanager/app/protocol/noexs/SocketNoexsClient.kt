@@ -69,9 +69,18 @@ class SocketNoexsClient(
     private fun readResult(socket: Socket): Int {
         val bytes = ByteArray(RESULT_BYTES)
         var offset = 0
+        val deadlineNanos = System.nanoTime() + responseTimeoutMillis * NANOS_PER_MILLISECOND
         try {
             val input = socket.getInputStream()
             while (offset < bytes.size) {
+                val remainingNanos = deadlineNanos - System.nanoTime()
+                if (remainingNanos <= 0) {
+                    throw SocketTimeoutException("Noexs result deadline exceeded")
+                }
+                socket.soTimeout =
+                    ((remainingNanos + NANOS_PER_MILLISECOND - 1) / NANOS_PER_MILLISECOND)
+                        .coerceAtMost(Int.MAX_VALUE.toLong())
+                        .toInt()
                 val count = input.read(bytes, offset, bytes.size - offset)
                 if (count == -1) {
                     throw ProtocolError.MalformedResponse(
@@ -97,5 +106,6 @@ class SocketNoexsClient(
         const val MODULE_MASK = 0x1FF
         const val DESCRIPTION_SHIFT = 9
         const val DESCRIPTION_MASK = 0x1FFF
+        const val NANOS_PER_MILLISECOND = 1_000_000L
     }
 }

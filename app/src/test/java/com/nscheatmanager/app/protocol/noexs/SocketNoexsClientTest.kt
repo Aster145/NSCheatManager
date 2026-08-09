@@ -2,6 +2,7 @@ package com.nscheatmanager.app.protocol.noexs
 
 import com.nscheatmanager.app.protocol.ProtocolError
 import java.io.EOFException
+import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -52,6 +53,22 @@ class SocketNoexsClientTest {
             assertEquals("Noexs result", error.operation)
             server.awaitReceivedCount(1)
             assertArrayEquals(byteArrayOf(0x18), server.received.single())
+            assertEquals(listOf(true), server.remoteClosed)
+        }
+    }
+
+    @Test
+    fun responseTimeoutIsATotalDeadlineForSlowFragmentedResult() = runTest {
+        FakeBinaryServer(
+            responses = listOf(byteArrayOf(0, 0, 0, 0)),
+            fragmentDelayMillis = 20,
+        ).use { server ->
+            val client = newClient(server, responseTimeoutMillis = 30)
+
+            val error = expectThrows<ProtocolError.Timeout> { client.detachDmnt() }
+
+            assertEquals("Noexs result", error.operation)
+            server.awaitReceivedCount(1)
             assertEquals(listOf(true), server.remoteClosed)
         }
     }
@@ -123,6 +140,7 @@ class SocketNoexsClientTest {
 private class FakeBinaryServer(
     private val responses: List<ByteArray?>,
     private val closeAfterResponse: Boolean = false,
+    private val fragmentDelayMillis: Long = 0,
 ) : AutoCloseable {
     private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     private val executor = Executors.newCachedThreadPool()
@@ -152,22 +170,34 @@ private class FakeBinaryServer(
 
     private fun serve(socket: Socket, response: ByteArray?) {
         socket.use {
-            val request = it.getInputStream().readNBytes(1)
-            if (request.size == 1) received += request
-            if (response != null) {
-                it.getOutputStream().apply {
-                    write(response)
-                    flush()
+            try {
+                val request = it.getInputStream().readNBytes(1)
+                if (request.size == 1) received += request
+                if (response != null) {
+                    it.getOutputStream().apply {
+                        if (fragmentDelayMillis == 0L) {
+                            write(response)
+                            flush()
+                        } else {
+                            response.forEach { byte ->
+                                write(byte.toInt())
+                                flush()
+                                Thread.sleep(fragmentDelayMillis)
+                            }
+                        }
+                    }
                 }
-            }
-            if (!closeAfterResponse) {
-                it.soTimeout = 1_000
-                remoteClosed += try {
-                    it.getInputStream().read() == -1
-                } catch (_: Exception) {
-                    false
+                if (!closeAfterResponse) {
+                    it.soTimeout = 1_000
+                    remoteClosed += try {
+                        it.getInputStream().read() == -1
+                    } catch (_: Exception) {
+                        false
+                    }
+                } else if (closeAfterResponse) {
+                    remoteClosed += true
                 }
-            } else if (closeAfterResponse) {
+            } catch (_: IOException) {
                 remoteClosed += true
             }
         }
