@@ -4,6 +4,7 @@ import com.nscheatmanager.app.core.model.ValueType
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LittleEndianCodecTest {
@@ -72,6 +73,33 @@ class LittleEndianCodecTest {
         assertInvalid { LittleEndianCodec.decode(ValueType.Int32, byteArrayOf(1, 2, 3)) }
     }
 
+    @Test fun exactBoundaryTableRoundTripsEverySupportedScalarType() {
+        val cases = listOf(
+            Triple(ValueType.Int8, "-128", "80"), Triple(ValueType.Int8, "127", "7F"),
+            Triple(ValueType.UInt8, "0", "00"), Triple(ValueType.UInt8, "255", "FF"),
+            Triple(ValueType.Int16, "-32768", "0080"), Triple(ValueType.Int16, "32767", "FF7F"),
+            Triple(ValueType.UInt16, "0", "0000"), Triple(ValueType.UInt16, "65535", "FFFF"),
+            Triple(ValueType.Int32, "-2147483648", "00000080"), Triple(ValueType.Int32, "2147483647", "FFFFFF7F"),
+            Triple(ValueType.UInt32, "0", "00000000"), Triple(ValueType.UInt32, "4294967295", "FFFFFFFF"),
+            Triple(ValueType.Int64, "-9223372036854775808", "0000000000000080"), Triple(ValueType.Int64, "9223372036854775807", "FFFFFFFFFFFFFF7F"),
+            Triple(ValueType.UInt64, "0", "0000000000000000"), Triple(ValueType.UInt64, "18446744073709551615", "FFFFFFFFFFFFFFFF"),
+        )
+        cases.forEach { (type, value, hex) ->
+            val bytes = LittleEndianCodec.encode(type, value)
+            assertEquals("$type $value bytes", hex, bytes.joinToString("") { "%02X".format(it.toInt() and 255) })
+            assertEquals("$type $value decode", value, LittleEndianCodec.decode(type, bytes))
+        }
+    }
+
+    @Test fun ieeeSpecialPolicyPreservesNegativeZeroAndInfinityAndClassifiesNan() {
+        assertEquals("00000080", LittleEndianCodec.encode(ValueType.Float, "-0.0").toHex())
+        assertEquals("0000000000000080", LittleEndianCodec.encode(ValueType.Double, "-0.0").toHex())
+        assertEquals("0000807F", LittleEndianCodec.encode(ValueType.Float, "Infinity").toHex())
+        assertEquals("000080FF", LittleEndianCodec.encode(ValueType.Float, "-Infinity").toHex())
+        assertTrue(LittleEndianCodec.decode(ValueType.Float, LittleEndianCodec.encode(ValueType.Float, "NaN")).toFloat().isNaN())
+        assertTrue(LittleEndianCodec.decode(ValueType.Double, LittleEndianCodec.encode(ValueType.Double, "NaN")).toDouble().isNaN())
+    }
+
     private fun assertInvalid(block: () -> Unit) {
         try {
             block()
@@ -81,3 +109,5 @@ class LittleEndianCodecTest {
         }
     }
 }
+
+private fun ByteArray.toHex() = joinToString("") { "%02X".format(it.toInt() and 255) }

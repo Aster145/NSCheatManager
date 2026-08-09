@@ -4,6 +4,7 @@ import com.nscheatmanager.app.core.model.BuildId
 import com.nscheatmanager.app.core.model.TitleId
 import com.nscheatmanager.app.core.model.ValueType
 import com.nscheatmanager.app.core.model.MemoryTarget
+import com.nscheatmanager.app.core.binary.LittleEndianCodec
 import com.nscheatmanager.app.domain.GameOperationKey
 import com.nscheatmanager.app.domain.ImmutableBytes
 import com.nscheatmanager.app.domain.LockedValue
@@ -18,6 +19,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.CompletableDeferred
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -101,7 +106,11 @@ class MemoryViewModelTest {
         val vm = MemoryViewModel(gateway, scope = backgroundScope)
         for (mode in AddressMode.entries) {
             vm.selectMode(mode); vm.selectType(ValueType.Hex); vm.updateAddress("1")
-            for (size in listOf(1, 4096)) { vm.updateLength(size.toString()); vm.read(); runCurrent(); assertEquals(size, gateway.reads.last().third) }
+            for (size in listOf(1, 4096)) {
+                vm.updateLength(size.toString()); vm.read(); runCurrent(); assertEquals(size, gateway.reads.last().third)
+                assertEquals(size * 3 - 1, vm.uiState.value.result!!.raw.length)
+                assertEquals(size * 2, vm.uiState.value.result!!.value.length)
+            }
         }
         assertEquals(listOf(MemoryTarget.Absolute(1u), MemoryTarget.MainRelative(1u), MemoryTarget.HeapRelative(1u)), gateway.reads.map { it.second }.distinct())
     }
@@ -131,25 +140,66 @@ class MemoryViewModelTest {
         assertNull(restored.uiState.value.confirmation)
     }
 
+    @Test fun nonCancellableLateReadSuccessAndFailureCannotOverwriteNewClaim() = runTest(dispatcher) {
+        val gateway = FakeMemoryGateway(); val oldSuccess = ManualBarrier<MemoryReadResult>(); gateway.readBarrier = oldSuccess
+        val vm = MemoryViewModel(gateway, scope = backgroundScope, clockMillis = { 7 })
+        vm.updateAddress("10"); vm.read(); runCurrent()
+        gateway.switchTo(2); vm.refreshSession(); vm.updateAddress("20"); vm.read(); runCurrent()
+        assertEquals("42", vm.uiState.value.result?.value)
+        oldSuccess.succeed(MemoryReadResult(MemoryTarget.Absolute(0x10u), 0x10u, ValueType.Int32, ImmutableBytes.copyOf(byteArrayOf(99,0,0,0)), "99")); runCurrent()
+        assertEquals("42", vm.uiState.value.result?.value); assertFalse(vm.uiState.value.busy); assertNull(vm.uiState.value.error)
+        val oldFailure = ManualBarrier<MemoryReadResult>(); gateway.readBarrier = oldFailure
+        vm.read(); runCurrent(); gateway.switchTo(3); vm.refreshSession(); vm.read(); runCurrent()
+        oldFailure.fail(IllegalStateException("late")); runCurrent()
+        assertEquals("42", vm.uiState.value.result?.value); assertFalse(vm.uiState.value.busy); assertNull(vm.uiState.value.error)
+    }
+
+    @Test fun lateWriteLockAndUnlockCannotAffectNewSessionOrAuthoritativeLock() = runTest(dispatcher) {
+        val gateway = FakeMemoryGateway(); val vm = MemoryViewModel(gateway, scope = backgroundScope)
+        val oldWrite = ManualBarrier<Unit>(); gateway.writeBarrier = oldWrite
+        vm.updateAddress("10"); vm.updateValue("1"); vm.requestWrite(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
+        gateway.switchTo(2); vm.refreshSession(); vm.updateValue("2"); vm.requestWrite(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
+        oldWrite.fail(IllegalStateException("late write")); runCurrent(); assertFalse(vm.uiState.value.busy); assertNull(vm.uiState.value.error)
+        val oldLock = ManualBarrier<LockedValue>(); gateway.lockBarrier = oldLock
+        vm.toggleLock(true); runCurrent(); gateway.switchTo(3); vm.refreshSession(); vm.updateAddress("30"); vm.updateValue("3"); vm.toggleLock(true); runCurrent()
+        val newLock = vm.uiState.value.locked!!
+        oldLock.succeed(LockedValue(MemoryTarget.Absolute(0x10u), 0x10u, ValueType.Int32, ImmutableBytes.copyOf(byteArrayOf(1,0,0,0)))); runCurrent()
+        assertEquals(newLock, vm.uiState.value.locked)
+        val oldUnlock = ManualBarrier<Unit>(); gateway.unlockBarrier = oldUnlock
+        vm.toggleLock(false); runCurrent(); gateway.switchTo(4)
+        val authoritative = LockedValue(MemoryTarget.Absolute(0x77u), 0x77u, ValueType.UInt8, ImmutableBytes.copyOf(byteArrayOf(7)))
+        gateway.snapshot = gateway.snapshot.copy(activeLocks = mapOf(0x77uL to authoritative)); vm.refreshSession()
+        oldUnlock.succeed(Unit); runCurrent(); assertEquals(authoritative, vm.uiState.value.locked); assertFalse(vm.uiState.value.busy)
+    }
+
     private class FakeMemoryGateway(var key: GameOperationKey? = Companion.key) : MemorySessionGateway {
         var snapshot = MemorySessionSnapshot(key, identity, emptyMap(), emptySet())
         val writes = mutableListOf<Triple<GameOperationKey, ULong, ByteArray>>()
         val reads = mutableListOf<Triple<GameOperationKey, MemoryTarget, Int>>()
         val unlocks = mutableListOf<ULong>()
         var readGate: CompletableDeferred<Unit>? = null
+        var readBarrier: ManualBarrier<MemoryReadResult>? = null
+        var writeBarrier: ManualBarrier<Unit>? = null
+        var lockBarrier: ManualBarrier<LockedValue>? = null
+        var unlockBarrier: ManualBarrier<Unit>? = null
         override fun currentSnapshot() = snapshot.copy(operationKey = key)
         override suspend fun read(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?): MemoryReadResult {
+            readBarrier?.also { readBarrier = null }?.let { return it.await() }
             readGate?.await()
             reads += Triple(expected, target, count ?: type.byteSize!!)
-            return MemoryReadResult(target, absolute(target), type,
-                ImmutableBytes.copyOf(byteArrayOf(42,0,0,0)), "42")
+            val size = count ?: type.byteSize!!
+            val bytes = ByteArray(size).also { it[0] = 42 }
+            return MemoryReadResult(target, absolute(target), type, ImmutableBytes.copyOf(bytes), LittleEndianCodec.decode(type, bytes))
         }
         override suspend fun write(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) {
+            writeBarrier?.also { writeBarrier = null }?.await()
             writes += Triple(expected, absolute(target), bytes.copyOf())
         }
         override suspend fun lock(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue =
-            LockedValue(target, absolute(target), type, ImmutableBytes.copyOf(bytes)).also { snapshot = snapshot.copy(activeLocks = mapOf(it.absoluteAddress to it)) }
-        override suspend fun unlock(expected: GameOperationKey, address: ULong) { unlocks += address; snapshot = snapshot.copy(activeLocks = snapshot.activeLocks - address) }
+            (lockBarrier?.also { lockBarrier = null }?.await() ?: LockedValue(target, absolute(target), type, ImmutableBytes.copyOf(bytes)))
+                .also { if (key == expected) snapshot = snapshot.copy(activeLocks = mapOf(it.absoluteAddress to it)) }
+        override suspend fun unlock(expected: GameOperationKey, address: ULong) { unlockBarrier?.also { unlockBarrier = null }?.await(); unlocks += address; if (key == expected) snapshot = snapshot.copy(activeLocks = snapshot.activeLocks - address) }
+        fun switchTo(generation: Long) { key = Companion.key.copy(generation = generation); snapshot = snapshot.copy(operationKey = key, activeLocks = emptyMap()) }
         private fun absolute(target: MemoryTarget) = when (target) {
             is MemoryTarget.Absolute -> target.address
             is MemoryTarget.MainRelative -> identity.mainBase + target.offset
@@ -160,4 +210,11 @@ class MemoryViewModelTest {
         val identity = GameIdentity(TitleId.parse("0100000000000001"), BuildId.parse("0123456789ABCDEF"), 0x1000u, 0x2000u)
         val key = GameOperationKey("device", identity.titleId, identity.buildId, 1)
     }
+}
+
+private class ManualBarrier<T> {
+    private var continuation: Continuation<T>? = null
+    suspend fun await(): T = suspendCoroutine { continuation = it }
+    fun succeed(value: T) = requireNotNull(continuation).resume(value)
+    fun fail(error: Throwable) = requireNotNull(continuation).resumeWithException(error)
 }

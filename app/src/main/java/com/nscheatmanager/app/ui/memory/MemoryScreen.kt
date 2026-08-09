@@ -43,7 +43,7 @@ data class MemoryActions(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(actions.read, Modifier.weight(1f).testTag("memory-read"), enabled = enabled) { Text(stringResource(R.string.memory_read)) }
             Button(actions.write, Modifier.weight(1f), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
-            Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = state.ready && !state.busy, role = Role.Checkbox, onValueChange = actions.lock)) {
+            Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = state.ready && !state.busy, role = Role.Checkbox, onValueChange = actions.lock).semantics(mergeDescendants = true) {}) {
                 Checkbox(state.locked != null, null, enabled = state.ready && !state.busy)
                 Text(stringResource(R.string.memory_lock), Modifier.padding(top = 12.dp))
             }
@@ -68,8 +68,9 @@ data class MemoryActions(
 }
 @Composable private fun ResultCard(result: MemoryResultUi) {
     val clipboard = LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     Card(Modifier.fillMaxWidth().testTag("memory-result")) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("0x${result.address.toString(16).uppercase()}"); Text(result.raw); Text("${result.type.name}: ${result.value}"); Text(java.text.DateFormat.getTimeInstance().format(java.util.Date(result.atMillis)))
+        Text("0x${result.address.toString(16).uppercase()}"); Text(result.raw); Text("${result.type.name}: ${result.value}"); Text(android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(result.atMillis)), Modifier.testTag("memory-result-time"))
         TextButton({ clipboard.setText(AnnotatedString("${result.raw}\n${result.value}")) }, Modifier.testTag("memory-copy")) { Text(stringResource(R.string.memory_copy)) }
     } }
 }
