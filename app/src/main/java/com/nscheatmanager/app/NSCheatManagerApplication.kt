@@ -30,6 +30,7 @@ import com.nscheatmanager.app.ui.settings.AppPreferencesAdapter
 import com.nscheatmanager.app.ui.game.GameDeviceStore
 import com.nscheatmanager.app.ui.game.GameSessionGateway
 import com.nscheatmanager.app.data.files.EditorDraftStore
+import com.nscheatmanager.app.ui.GameExternalActions
 
 interface MainActivityDependencies {
     val preferences: LanguagePreferenceStore
@@ -37,6 +38,7 @@ interface MainActivityDependencies {
     val gameDevices: GameDeviceStore
     val gameFiles: GameFileGateway
     val editorDrafts: EditorDraftStore
+    val externalActions: GameExternalActions
     fun createGameSession(scope: CoroutineScope): GameSessionGateway
 }
 
@@ -61,6 +63,7 @@ class AppDependencies(application: Application) : MainActivityDependencies {
     )
     override val gameFiles: GameFileGateway = MirrorGameFileGateway(mirror, zipService, synchronization)
     override val editorDrafts = FileEditorDraftStore(File(application.cacheDir, "editor-drafts").toPath())
+    override val externalActions: GameExternalActions = GameExternalActions.Platform
 
     override fun createGameSession(scope: CoroutineScope): DeviceSessionGateway {
         val persistence = DeviceRepositorySessionPersistence(deviceRepository)

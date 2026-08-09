@@ -22,9 +22,13 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertContentDescriptionContains
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nscheatmanager.app.domain.DeviceProfile
@@ -300,6 +304,22 @@ class SettingsAndAboutTest {
         ).assertHasClickAction().performClick()
         compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
+    }
+
+    @Test fun defaultRadioExposesLocalizedLabelRoleAndSelectedStateOnSameNode() {
+        val device = DeviceProfile("living", "Living room", "192.168.1.35", isDefault = true)
+        compose.setContent {
+            SettingsScreen(
+                state = SettingsUiState(devices = listOf(device), languageTag = "en"),
+                onBack = {}, onAddDevice = {}, onEditDevice = {}, onDeleteDevice = {}, onSetDefault = {},
+                onLanguageSelected = {}, onEditorChanged = {}, onSaveEditor = {}, onDismissEditor = {},
+            )
+        }
+        compose.onNodeWithTag("default-living")
+            .assertContentDescriptionContains("Living room", substring = true)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
+            .assertIsSelected()
+            .assertHasClickAction()
     }
 
     private suspend fun awaitState(

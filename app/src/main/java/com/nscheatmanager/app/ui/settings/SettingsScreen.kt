@@ -156,7 +156,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.testTag("language-actions"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FilterChip(
                                 selected = state.languageTag == AppPreferences.CHINESE_LANGUAGE_TAG,
                                 onClick = { onLanguageSelected(AppPreferences.CHINESE_LANGUAGE_TAG) },
@@ -223,7 +223,7 @@ private fun DeviceCard(
                 RadioButton(
                     selected = device.isDefault,
                     onClick = onSetDefault,
-                    modifier = Modifier.semantics {
+                    modifier = Modifier.testTag("default-${device.id}").semantics {
                         contentDescription = defaultLabel
                         stateDescription = defaultState
                     },

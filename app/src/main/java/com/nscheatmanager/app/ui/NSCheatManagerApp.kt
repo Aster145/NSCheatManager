@@ -94,6 +94,13 @@ data class EditorEffectActions(
     }
 }
 
+interface GameExternalActions {
+    fun openZip(fallback: () -> Unit, deliver: (ByteArray) -> Unit, failure: (Throwable) -> Unit) = fallback()
+    fun share(fallback: () -> Unit, archive: com.nscheatmanager.app.ui.game.ShareArchive, failure: (Throwable) -> Unit) = fallback()
+
+    data object Platform : GameExternalActions
+}
+
 private data class MainDestination(val route: String, val label: Int, val tag: String)
 
 private val mainDestinations = listOf(
@@ -112,6 +119,7 @@ fun NSCheatManagerApp(
     gameActions: GameScreenActions = GameScreenActions.None,
     gameEffects: Flow<GameEffect> = emptyFlow(),
     gameEffectActions: GameEffectActions = GameEffectActions.None,
+    externalActions: GameExternalActions = GameExternalActions.Platform,
     editorState: CheatEditorUiState = CheatEditorUiState(),
     editorActions: CheatEditorActions = CheatEditorActions.None,
     editorEffects: Flow<EditorEffect> = emptyFlow(),
@@ -140,10 +148,20 @@ fun NSCheatManagerApp(
     LaunchedEffect(gameEffects) {
         gameEffects.collect { effect ->
             when (effect) {
-                GameEffect.OpenZipDocument -> documentLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                GameEffect.OpenZipDocument -> externalActions.openZip(
+                    fallback = { documentLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    deliver = gameEffectActions.zipDocument,
+                    failure = gameEffectActions.zipFailure,
+                )
                 is GameEffect.Share -> runCatching {
-                    val intent = ZipShareService(context).createIntent(effect.archive)
-                    context.startActivity(Intent.createChooser(intent, shareChooserTitle))
+                    externalActions.share(
+                        fallback = {
+                            val intent = ZipShareService(context).createIntent(effect.archive)
+                            context.startActivity(Intent.createChooser(intent, shareChooserTitle))
+                        },
+                        archive = effect.archive,
+                        failure = gameEffectActions.externalFailure,
+                    )
                 }.onFailure(gameEffectActions.externalFailure)
                 is GameEffect.Message -> snackbar.showSnackbar(resources.localizedGameMessage(effect))
                 is GameEffect.UserError -> snackbar.showSnackbar(resources.localizedUserMessage(effect.message))
@@ -241,7 +259,7 @@ fun NSCheatManagerApp(
                     modifier = Modifier.testTag("settings-content"),
                 )
             }
-            composable("about") { AboutScreen(versionName, navController::popBackStack) }
+            composable("about") { AboutScreen(versionName, navController::popBackStack, Modifier.testTag("about-content")) }
         }
     }
 
@@ -305,8 +323,8 @@ private fun GameConfirmationDialog(confirmation: GameConfirmation, onDismiss: ()
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.confirm_operation)) },
         text = { Text(description) },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.confirm)) } },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.testTag("game-dismiss")) { Text(stringResource(R.string.cancel)) } },
+        confirmButton = { TextButton(onClick = onConfirm, modifier = Modifier.testTag("game-confirm")) { Text(stringResource(R.string.confirm)) } },
     )
 }
 

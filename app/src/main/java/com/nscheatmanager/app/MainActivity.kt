@@ -117,6 +117,7 @@ class MainActivity : AppCompatActivity() {
                         zipFailure = gameViewModel::onZipExternalFailure,
                         externalFailure = gameViewModel::onExternalFailure,
                     ),
+                    externalActions = dependencies.externalActions,
                     editorState = editorState,
                     editorActions = CheatEditorActions(
                         selectTab = editorViewModel::selectTab,

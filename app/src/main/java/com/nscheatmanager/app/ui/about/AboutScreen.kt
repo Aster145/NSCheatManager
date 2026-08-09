@@ -135,6 +135,7 @@ fun AboutScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag("qq-link")
                     .clickable {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(QQ_GROUP_URL))
                         showNoHandler = !openIntent(intent)

@@ -37,4 +37,10 @@ The immediately preceding clean run built/linted/assembled and passed all 48 ins
 - Replaced the test-only alternate composition root with injectable `MainActivityDependencies`. Production and tests now always create the normal ViewModels, lifecycle-aware collectors, and `NSCheatManagerApp` tree. The API 28 harness performs a real confirmed memory write and lock, backgrounds/recreates the Activity without replay, and verifies one final session close.
 - The bilingual 320 dp tests now inject an explicit 1.5 font-scale `LocalDensity` as well as localized configuration, and assert critical editor, Game, and Memory control bounds remain within the root.
 
+## Fix round 3
+
+- Added injectable external ZIP/share actions without bypassing the production composition. The real Activity harness now drives the normal Game and Memory ViewModels/effect collectors through confirmed write, lock, staged upload, direct-overwrite confirmation, ZIP picker delivery/inspection/import confirmation, and share launch. Every collaborator count remains exactly one after backgrounding and recreation, confirmations survive recreation before consumption, and final session close is exact.
+- Expanded the 320 dp / 1.5 font-scale bilingual traversal to a real Cheats row, dirty editor with both tabs and notes content, Memory actions, Settings language actions, and the About QQ action; critical controls are scrolled into view and checked against root horizontal bounds.
+- Added an explicit interactive semantics inventory covering the overflow icon control, edit-mode checkbox menu item, cheat checkbox row, memory lock checkbox, and default-device radio. Each assertion is on the clickable node and verifies its label/content description, role, state, enabled/selected state as applicable.
+
 Lint completed with zero errors. Remaining compiler messages are pre-existing API deprecation advisories.
