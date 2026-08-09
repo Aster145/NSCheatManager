@@ -13,10 +13,13 @@ import com.nscheatmanager.app.protocol.sysbot.SysBotbase
 import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 enum class ConnectionState {
     Disconnected,
@@ -43,6 +47,7 @@ data class DeviceSessionState(
     val cheatFile: CheatFile? = null,
     val cheatRelativePath: String? = null,
     val checkedGroups: Set<String> = emptySet(),
+    val executingGroups: Set<String> = emptySet(),
     val activeLocks: Map<ULong, LockedValue> = emptyMap(),
     val pendingLockCleanup: Set<ULong> = emptySet(),
     val error: Throwable? = null,
@@ -50,6 +55,14 @@ data class DeviceSessionState(
 
 class SessionNotReadyException(message: String = "A validated device session is required") :
     IllegalStateException(message)
+
+class CheatGroupBusyException(val groupName: String) :
+    IllegalStateException("Cheat group '$groupName' is already executing")
+
+class SessionCloseTimeoutException(
+    val timeoutMillis: Long,
+    cause: Throwable,
+) : IOException("Session cleanup did not finish within $timeoutMillis ms", cause)
 
 fun interface SysBotbaseFactory {
     fun create(profile: DeviceProfile): SysBotbase
@@ -66,12 +79,20 @@ fun interface NoexsFactory {
  */
 class DeviceSession(
     private val scope: CoroutineScope,
+    private val cleanupDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val closeTimeoutMillis: Long = DEFAULT_CLOSE_TIMEOUT_MILLIS,
+    private val freezeTimeoutMillis: Long = DEFAULT_FREEZE_TIMEOUT_MILLIS,
     private val sysBotbaseFactory: SysBotbaseFactory,
     private val noexsFactory: NoexsFactory,
     private val recognizeCurrentGame: RecognizeCurrentGame,
     private val executeCheatGroup: ExecuteCheatGroup,
     private val memoryUseCases: MemoryUseCases,
 ) {
+    init {
+        require(closeTimeoutMillis > 0) { "Close timeout must be positive" }
+        require(freezeTimeoutMillis > 0) { "Freeze timeout must be positive" }
+    }
+
     private val operationMutex = Mutex()
     private val controlLock = Any()
     private val mutableState = MutableStateFlow(DeviceSessionState())
@@ -81,10 +102,12 @@ class DeviceSession(
     private var generation = 0L
     private var transitionJob: Job? = null
     private var activeOperationJob: Job? = null
+    private var closed = false
     private var liveConnection: LiveConnection? = null
     private val activeLocksByDevice = mutableMapOf<String, LinkedHashMap<ULong, ActiveLock>>()
     private val pendingByDevice =
         mutableMapOf<String, LinkedHashMap<GameKey, LinkedHashSet<ULong>>>()
+    private val executionClaims = linkedSetOf<ExecutionClaim>()
 
     fun connectAndRecognize(device: DeviceProfile): Job = reconnect(device)
 
@@ -127,23 +150,81 @@ class DeviceSession(
         }
     }
 
-    suspend fun executeGroup(group: CheatGroup): ExecutionReport = readyOperation { token, live, identity ->
-        val report = executeCheatGroup.execute(
-            device = live.device,
-            identity = identity,
-            group = group,
-            client = live.client,
-            checkpoint = { checkpoint(token) },
-        )
-        report.error?.let { error ->
-            if (isConnectionLoss(error)) markAbnormalLoss(token, error)
-        }
-        if (report.status == ExecutionStatus.Complete) {
-            updateIfCurrent(token) { current ->
-                current.copy(checkedGroups = immutableSet(current.checkedGroups + group.name))
+    /**
+     * Terminal lifecycle cleanup which does not depend on [scope] still being active.
+     * The caller awaits the bounded cleanup directly; no detached cleanup job is created.
+     */
+    suspend fun closeAndJoin() {
+        val token = synchronized(controlLock) {
+            if (!closed) {
+                closed = true
+                generation += 1
+                transitionJob?.cancel(SupersededSessionOperation())
+                activeOperationJob?.cancel(SupersededSessionOperation())
+                mutableState.value = mutableState.value.copy(
+                    connection = ConnectionState.Disconnected,
+                    gameValidated = false,
+                    error = null,
+                )
             }
+            generation
         }
-        report
+        try {
+            withContext(cleanupDispatcher + NonCancellable) {
+                withTimeout(closeTimeoutMillis) {
+                    operationMutex.withLock {
+                        val cleanupError = closeLiveNormally()
+                        updateIfCurrentIgnoringCancellation(token) { current ->
+                            current.copy(
+                                connection = ConnectionState.Disconnected,
+                                gameValidated = false,
+                                activeLocks = lockSnapshot(current.device?.id),
+                                pendingLockCleanup = pendingSnapshot(current.device?.id),
+                                error = cleanupError,
+                            )
+                        }
+                    }
+                }
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            val failure = SessionCloseTimeoutException(closeTimeoutMillis, timeout)
+            updateIfCurrentIgnoringCancellation(token) { current ->
+                current.copy(
+                    connection = ConnectionState.Error,
+                    gameValidated = false,
+                    activeLocks = lockSnapshot(current.device?.id),
+                    pendingLockCleanup = pendingSnapshot(current.device?.id),
+                    error = failure,
+                )
+            }
+            throw failure
+        }
+    }
+
+    suspend fun executeGroup(group: CheatGroup): ExecutionReport {
+        val claim = claimExecution(group.name)
+        try {
+            return readyOperation { token, live, identity ->
+                val report = executeCheatGroup.execute(
+                    device = live.device,
+                    identity = identity,
+                    group = group,
+                    client = live.client,
+                    checkpoint = { checkpoint(token) },
+                )
+                report.error?.let { error ->
+                    if (isConnectionLoss(error)) markAbnormalLoss(token, error)
+                }
+                if (report.status == ExecutionStatus.Complete) {
+                    updateIfCurrent(token) { current ->
+                        current.copy(checkedGroups = immutableSet(current.checkedGroups + group.name))
+                    }
+                }
+                report
+            }
+        } finally {
+            releaseExecution(claim)
+        }
     }
 
     /** Clearing a checkbox is persistence/UI-only and intentionally sends no memory command. */
@@ -196,11 +277,28 @@ class DeviceSession(
                 "This absolute address is already locked"
             }
         }
+        val callerJob = requireNotNull(currentCoroutineContext()[Job])
+        checkpoint(token)
+        var freezeCommitted = false
         val lock = try {
-            memoryUseCases.freezePrepared(live.client, prepared)
+            withContext(NonCancellable) {
+                if (!callerJob.isActive || !isCurrentGeneration(token)) {
+                    throw FreezeCancelledBeforeCommit()
+                }
+                freezeCommitted = true
+                try {
+                    withTimeout(freezeTimeoutMillis) {
+                        memoryUseCases.freezePrepared(live.client, prepared)
+                    }
+                } catch (timeout: TimeoutCancellationException) {
+                    throw ProtocolError.Timeout("freeze", timeout)
+                }
+            }
             prepared
         } catch (error: Throwable) {
-            if (error is CancellationException) {
+            if (error is FreezeCancelledBeforeCommit) {
+                throw error
+            } else if (error is CancellationException && freezeCommitted) {
                 // Cancellation after the command write may still have created the remote lock.
                 cleanupUntrackedLock(live, identity, prepared)
             } else if (isConnectionLoss(error)) {
@@ -211,6 +309,11 @@ class DeviceSession(
                 markAbnormalLoss(token, error)
             }
             throw error
+        }
+        if (!callerJob.isActive || !isCurrentGeneration(token)) {
+            cleanupUntrackedLock(live, identity, lock)
+            callerJob.ensureActive()
+            checkpoint(token)
         }
         try {
             synchronized(controlLock) {
@@ -280,6 +383,7 @@ class DeviceSession(
                 gameValidated = false,
                 activeLocks = if (current.device?.id == device.id) current.activeLocks else emptyMap(),
                 pendingLockCleanup = pendingSnapshot(device.id),
+                executingGroups = if (current.device?.id == device.id) current.executingGroups else emptySet(),
                 error = null,
             )
         },
@@ -292,6 +396,7 @@ class DeviceSession(
         val token: Long
         val job: Job
         synchronized(controlLock) {
+            check(!closed) { "Device session is closed" }
             generation += 1
             token = generation
             transitionJob?.cancel(SupersededSessionOperation())
@@ -405,6 +510,7 @@ class DeviceSession(
                 cheatFile = recognized.document.cheatFile,
                 cheatRelativePath = recognized.document.relativePath,
                 checkedGroups = immutableSet(recognized.checkedGroups),
+                executingGroups = executionSnapshot(device.id, recognized.identity),
                 activeLocks = lockSnapshot(device.id),
                 pendingLockCleanup = pendingSnapshot(device.id),
                 error = null,
@@ -436,12 +542,19 @@ class DeviceSession(
         live: LiveConnection,
         identity: GameIdentity,
         lock: LockedValue,
-    ) = withContext(NonCancellable) {
+    ) = withContext(cleanupDispatcher + NonCancellable) {
         try {
-            live.client.unfreeze(lock.absoluteAddress)
+            withTimeout(closeTimeoutMillis) {
+                live.client.unfreeze(lock.absoluteAddress)
+            }
         } catch (_: Throwable) {
             synchronized(controlLock) {
                 addPendingLocked(live.device.id, gameKey(identity), lock.absoluteAddress)
+                if (mutableState.value.device?.id == live.device.id) {
+                    mutableState.value = mutableState.value.copy(
+                        pendingLockCleanup = pendingSnapshotLocked(live.device.id),
+                    )
+                }
             }
         }
     }
@@ -454,6 +567,7 @@ class DeviceSession(
             // Revoke process-local trust before any potentially slow network cleanup.
             persistenceInvalidate(live.device.id)
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             firstFailure = error
         }
         val releaseFailure = releaseActiveLocks(live)
@@ -463,6 +577,7 @@ class DeviceSession(
         try {
             live.client.disconnect()
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             if (firstFailure == null) firstFailure = error else firstFailure.addSuppressed(error)
         }
         if (liveConnection === live) liveConnection = null
@@ -478,6 +593,12 @@ class DeviceSession(
             try {
                 live.client.unfreeze(active.lock.absoluteAddress)
             } catch (error: Throwable) {
+                if (error is CancellationException) {
+                    synchronized(controlLock) {
+                        addPendingLocked(live.device.id, active.game, active.lock.absoluteAddress)
+                    }
+                    throw error
+                }
                 if (firstFailure == null) firstFailure = error else firstFailure.addSuppressed(error)
                 synchronized(controlLock) {
                     addPendingLocked(live.device.id, active.game, active.lock.absoluteAddress)
@@ -507,21 +628,9 @@ class DeviceSession(
                     addPendingLocked(live.device.id, active.game, active.lock.absoluteAddress)
                 }
             }
-            withContext(NonCancellable) {
-                try {
-                    live.client.disconnect()
-                } catch (closeError: Throwable) {
-                    error.addSuppressed(closeError)
-                }
-                try {
-                    persistenceInvalidate(live.device.id)
-                } catch (persistError: Throwable) {
-                    error.addSuppressed(persistError)
-                }
-            }
-            if (liveConnection === live) liveConnection = null
         }
-        updateIfCurrent(token) { current ->
+        // Revoke UI trust before either persistence or socket cleanup can suspend.
+        updateIfCurrentIgnoringCancellation(token) { current ->
             current.copy(
                 connection = ConnectionState.Error,
                 gameValidated = false,
@@ -529,6 +638,21 @@ class DeviceSession(
                 pendingLockCleanup = pendingSnapshot(current.device?.id),
                 error = error,
             )
+        }
+        if (live != null) {
+            withContext(NonCancellable) {
+                try {
+                    persistenceInvalidate(live.device.id)
+                } catch (persistError: Throwable) {
+                    error.addSuppressed(persistError)
+                }
+                try {
+                    live.client.disconnect()
+                } catch (closeError: Throwable) {
+                    error.addSuppressed(closeError)
+                }
+            }
+            if (liveConnection === live) liveConnection = null
         }
     }
 
@@ -560,6 +684,38 @@ class DeviceSession(
         }
     }
 
+    private fun claimExecution(groupName: String): ExecutionClaim = synchronized(controlLock) {
+        val current = mutableState.value
+        val device = current.device
+        val identity = current.game
+        if (
+            device == null || identity == null || !current.gameValidated ||
+            current.connection != ConnectionState.Ready
+        ) {
+            throw SessionNotReadyException()
+        }
+        val claim = ExecutionClaim(device.id, gameKey(identity), groupName)
+        if (!executionClaims.add(claim)) throw CheatGroupBusyException(groupName)
+        mutableState.value = current.copy(
+            executingGroups = executionSnapshotLocked(device.id, identity),
+        )
+        claim
+    }
+
+    private fun releaseExecution(claim: ExecutionClaim) {
+        synchronized(controlLock) {
+            executionClaims.remove(claim)
+            val current = mutableState.value
+            val device = current.device
+            val identity = current.game
+            if (device != null && identity != null) {
+                mutableState.value = current.copy(
+                    executingGroups = executionSnapshotLocked(device.id, identity),
+                )
+            }
+        }
+    }
+
     private suspend fun checkpoint(token: Long) {
         currentCoroutineContext().ensureActive()
         synchronized(controlLock) { checkGenerationLocked(token) }
@@ -568,6 +724,9 @@ class DeviceSession(
     private fun checkGenerationLocked(token: Long) {
         if (generation != token) throw SupersededSessionOperation()
     }
+
+    private fun isCurrentGeneration(token: Long): Boolean =
+        synchronized(controlLock) { generation == token }
 
     private suspend fun updateIfCurrent(
         token: Long,
@@ -642,6 +801,17 @@ class DeviceSession(
     private fun immutableSet(values: Set<String>): Set<String> =
         Collections.unmodifiableSet(LinkedHashSet(values))
 
+    private fun executionSnapshot(deviceId: String, identity: GameIdentity): Set<String> =
+        synchronized(controlLock) { executionSnapshotLocked(deviceId, identity) }
+
+    private fun executionSnapshotLocked(deviceId: String, identity: GameIdentity): Set<String> =
+        immutableSet(
+            executionClaims.asSequence()
+                .filter { it.deviceId == deviceId && it.game == gameKey(identity) }
+                .map { it.groupName }
+                .toCollection(linkedSetOf()),
+        )
+
     private fun isConnectionLoss(error: Throwable): Boolean = when (error) {
         is ProtocolError.Connection,
         is ProtocolError.Disconnected,
@@ -652,7 +822,14 @@ class DeviceSession(
 
     private data class LiveConnection(val device: DeviceProfile, val client: SysBotbase)
     private data class ActiveLock(val game: GameKey, val lock: LockedValue)
+    private data class ExecutionClaim(val deviceId: String, val game: GameKey, val groupName: String)
     private class SupersededSessionOperation : CancellationException("Session operation was superseded")
+    private class FreezeCancelledBeforeCommit : CancellationException("Freeze was cancelled before commit")
+
+    private companion object {
+        const val DEFAULT_CLOSE_TIMEOUT_MILLIS = 5_000L
+        const val DEFAULT_FREEZE_TIMEOUT_MILLIS = 5_000L
+    }
 }
 
 private fun gameKey(identity: GameIdentity) = GameKey(identity.titleId, identity.buildId)

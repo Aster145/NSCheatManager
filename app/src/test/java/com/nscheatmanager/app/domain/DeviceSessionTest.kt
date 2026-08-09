@@ -13,11 +13,17 @@ import com.nscheatmanager.app.protocol.noexs.Noexs
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
 import com.nscheatmanager.app.protocol.sysbot.SysBotbase
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -145,7 +151,7 @@ class DeviceSessionTest {
         )
 
         val oldJob = fixture.session.connectAndRecognize(DEVICE_A)
-        oldRecognitionStarted.await()
+        awaitGate(oldRecognitionStarted)
         val replacementJob = fixture.session.switchDevice(DEVICE_B)
         runCurrent()
         assertEquals(DEVICE_B, fixture.session.state.value.device)
@@ -176,7 +182,7 @@ class DeviceSessionTest {
         fixture.persistence.saveRelease[DEVICE_A.id] = releaseSave
 
         val oldJob = fixture.session.connectAndRecognize(DEVICE_A)
-        saveStarted.await()
+        awaitGate(saveStarted)
         val replacementJob = fixture.session.switchDevice(DEVICE_B)
         runCurrent()
         assertEquals(DEVICE_B, fixture.session.state.value.device)
@@ -237,7 +243,7 @@ class DeviceSessionTest {
         val oldWrite = async {
             fixture.session.writeValue(MemoryTarget.Absolute(0x6000u), ValueType.UInt8, "9")
         }
-        writeStarted.await()
+        awaitGate(writeStarted)
         val disconnect = fixture.session.disconnect()
         assertEquals(ConnectionState.Disconnected, fixture.session.state.value.connection)
         assertFalse(fixture.session.state.value.gameValidated)
@@ -267,6 +273,36 @@ class DeviceSessionTest {
         assertEquals(1, client.disconnectCalls)
         assertTrue(fixture.persistence.invalidated.isNotEmpty())
         assertTrue(fixture.persistence.invalidated.all { it == DEVICE_A.id })
+    }
+
+    @Test
+    fun closeAndJoinCleansExactLocksAfterOwningScopeWasCancelled() = runTest {
+        val ownerJob = SupervisorJob()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val ownerScope = CoroutineScope(dispatcher + ownerJob)
+        val client = FakeSysBotbase(GAME_A)
+        val fixture = fixture(
+            clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))),
+            sessionScope = ownerScope,
+            cleanupDispatcher = dispatcher,
+        )
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        val lock = fixture.session.lockValue(
+            MemoryTarget.MainRelative(0x33u),
+            ValueType.UInt16,
+            "4660",
+        )
+
+        ownerJob.cancel()
+        withTimeout(TEST_GATE_TIMEOUT_MILLIS) {
+            fixture.session.closeAndJoin()
+        }
+
+        assertEquals(listOf(lock.absoluteAddress), client.unfreezes)
+        assertEquals(1, client.disconnectCalls)
+        assertFalse(DEVICE_A.id in fixture.persistence.trustedDevices)
+        assertEquals(ConnectionState.Disconnected, fixture.session.state.value.connection)
+        assertFalse(fixture.session.state.value.gameValidated)
     }
 
     @Test
@@ -351,6 +387,41 @@ class DeviceSessionTest {
         assertEquals(listOf(lock.absoluteAddress), recovered.unfreezes)
         assertTrue(fixture.session.state.value.pendingLockCleanup.isEmpty())
         assertEquals(ConnectionState.Ready, fixture.session.state.value.connection)
+    }
+
+    @Test
+    fun abnormalLossRevokesStateAndRepositoryTrustBeforeDisconnectCanFinish() = runTest {
+        val disconnectStarted = CompletableDeferred<Unit>()
+        val disconnectRelease = CompletableDeferred<Unit>()
+        val client = FakeSysBotbase(
+            GAME_A,
+            disconnectStarted = disconnectStarted,
+            disconnectRelease = disconnectRelease,
+            ignoreDisconnectCancellation = true,
+        )
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        fixture.session.lockValue(MemoryTarget.Absolute(0x7654u), ValueType.UInt8, "1")
+        client.readFailure = ProtocolError.Disconnected()
+
+        val failedRead = async {
+            assertSuspendThrows<ProtocolError.Disconnected> {
+                fixture.session.readValue(MemoryTarget.Absolute(0x9000u), ValueType.UInt8)
+            }
+        }
+        awaitGate(disconnectStarted)
+
+        val stateBeforeDisconnectFinished = fixture.session.state.value
+        val trustedBeforeDisconnectFinished = DEVICE_A.id in fixture.persistence.trustedDevices
+        val readCompletedBeforeDisconnectFinished = failedRead.isCompleted
+        disconnectRelease.complete(Unit)
+        withTimeout(TEST_GATE_TIMEOUT_MILLIS) { failedRead.await() }
+
+        assertEquals(ConnectionState.Error, stateBeforeDisconnectFinished.connection)
+        assertFalse(stateBeforeDisconnectFinished.gameValidated)
+        assertEquals(setOf(0x7654uL), stateBeforeDisconnectFinished.pendingLockCleanup)
+        assertFalse(trustedBeforeDisconnectFinished)
+        assertFalse(readCompletedBeforeDisconnectFinished)
     }
 
     @Test
@@ -486,6 +557,96 @@ class DeviceSessionTest {
     }
 
     @Test
+    fun cancellationBeforeFreezeCommitSendsNeitherFreezeNorUnfreeze() = runTest {
+        val writeStarted = CompletableDeferred<Unit>()
+        val writeRelease = CompletableDeferred<Unit>()
+        val client = FakeSysBotbase(
+            GAME_A,
+            writeStarted = writeStarted,
+            writeRelease = writeRelease,
+            ignoreWriteCancellation = true,
+        )
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        val blockingWrite = async {
+            fixture.session.writeValue(MemoryTarget.Absolute(0x6000u), ValueType.UInt8, "1")
+        }
+        awaitGate(writeStarted)
+        val cancelledLock = async {
+            fixture.session.lockValue(MemoryTarget.Absolute(0x6100u), ValueType.UInt8, "2")
+        }
+        runCurrent()
+
+        cancelledLock.cancel()
+        writeRelease.complete(Unit)
+        withTimeout(TEST_GATE_TIMEOUT_MILLIS) { blockingWrite.await() }
+        cancelledLock.join()
+
+        assertTrue(client.freezeCalls.isEmpty())
+        assertTrue(client.unfreezes.isEmpty())
+        assertTrue(fixture.session.state.value.activeLocks.isEmpty())
+        assertTrue(fixture.session.state.value.pendingLockCleanup.isEmpty())
+    }
+
+    @Test
+    fun cancellationAfterFreezeCommitFinishesAttemptThenCleansExactAddress() = runTest {
+        val freezeEntered = CompletableDeferred<Unit>()
+        val allowFreezeSend = CompletableDeferred<Unit>()
+        val client = FakeSysBotbase(
+            GAME_A,
+            freezeEntered = freezeEntered,
+            freezeBeforeSendRelease = allowFreezeSend,
+        )
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+
+        val cancelledLock = async {
+            fixture.session.lockValue(MemoryTarget.Absolute(0x6200u), ValueType.UInt8, "3")
+        }
+        awaitGate(freezeEntered)
+        cancelledLock.cancel()
+        runCurrent()
+        val completedBeforeCommittedSend = cancelledLock.isCompleted
+        val cleanupBeforeCommittedSend = client.unfreezes.toList()
+
+        allowFreezeSend.complete(Unit)
+        cancelledLock.join()
+
+        assertFalse(completedBeforeCommittedSend)
+        assertTrue(cleanupBeforeCommittedSend.isEmpty())
+        assertEquals(listOf(0x6200uL), client.freezeCalls.map { it.first })
+        assertEquals(listOf(0x6200uL), client.unfreezes)
+        assertTrue(fixture.session.state.value.activeLocks.isEmpty())
+        assertTrue(fixture.session.state.value.pendingLockCleanup.isEmpty())
+    }
+
+    @Test
+    fun failedCleanupAfterCommittedFreezeCancellationPublishesPendingAddress() = runTest {
+        val freezeEntered = CompletableDeferred<Unit>()
+        val allowFreezeSend = CompletableDeferred<Unit>()
+        val client = FakeSysBotbase(
+            GAME_A,
+            freezeEntered = freezeEntered,
+            freezeBeforeSendRelease = allowFreezeSend,
+        )
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        client.unfreezeFailures[0x6300u] = ProtocolError.Disconnected()
+
+        val cancelledLock = async {
+            fixture.session.lockValue(MemoryTarget.Absolute(0x6300u), ValueType.UInt8, "4")
+        }
+        awaitGate(freezeEntered)
+        cancelledLock.cancel()
+        allowFreezeSend.complete(Unit)
+        cancelledLock.join()
+
+        assertEquals(listOf(0x6300uL), client.unfreezes)
+        assertEquals(setOf(0x6300uL), fixture.session.state.value.pendingLockCleanup)
+        assertTrue(fixture.session.state.value.activeLocks.isEmpty())
+    }
+
+    @Test
     fun recognizeAgainInvalidatesImmediatelyAndNeverExecutesCheckedGroups() = runTest {
         val secondRecognition = CompletableDeferred<Unit>()
         val client = FakeSysBotbase(GAME_A)
@@ -530,6 +691,38 @@ class DeviceSessionTest {
     }
 
     @Test
+    fun duplicateRapidGroupExecutionIsRejectedBeforeMutexAndWritesExactlyOnce() = runTest {
+        val writeStarted = CompletableDeferred<Unit>()
+        val releaseWrite = CompletableDeferred<Unit>()
+        val client = FakeSysBotbase(
+            GAME_A,
+            writeStarted = writeStarted,
+            writeRelease = releaseWrite,
+        )
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+
+        val firstExecution = async { fixture.session.executeGroup(STATIC_GROUP) }
+        awaitGate(writeStarted)
+        assertEquals(setOf(STATIC_GROUP.name), fixture.session.state.value.executingGroups)
+
+        withTimeout(TEST_GATE_TIMEOUT_MILLIS) {
+            assertSuspendThrows<CheatGroupBusyException> {
+                fixture.session.executeGroup(STATIC_GROUP)
+            }
+        }
+        assertEquals(1, client.writes.size)
+
+        releaseWrite.complete(Unit)
+        assertEquals(
+            ExecutionStatus.Complete,
+            withTimeout(TEST_GATE_TIMEOUT_MILLIS) { firstExecution.await() }.status,
+        )
+        assertEquals(1, client.writes.size)
+        assertTrue(fixture.session.state.value.executingGroups.isEmpty())
+    }
+
+    @Test
     fun detachDmntUsesOnlySelectedProfilesNoexsFactoryAndDoesNotTouchSysBot() = runTest {
         val sys = FakeSysBotbase(GAME_A)
         val noexs = FakeNoexs()
@@ -551,12 +744,15 @@ class DeviceSessionTest {
     private fun kotlinx.coroutines.test.TestScope.fixture(
         clients: MutableMap<String, ArrayDeque<FakeSysBotbase>>,
         noexs: MutableMap<String, ArrayDeque<FakeNoexs>> = mutableMapOf(),
+        sessionScope: CoroutineScope = backgroundScope,
+        cleanupDispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
     ): Fixture {
         val persistence = FakeSessionPersistence()
         val library = FakeCheatLibrary()
         val noexsRequestedPorts = mutableListOf<Int>()
         val session = DeviceSession(
-            scope = backgroundScope,
+            scope = sessionScope,
+            cleanupDispatcher = cleanupDispatcher,
             sysBotbaseFactory = SysBotbaseFactory { profile ->
                 requireNotNull(clients[profile.id]?.removeFirstOrNull()) {
                     "No fake sys-botbase left for ${profile.id}"
@@ -613,7 +809,7 @@ class DeviceSessionTest {
         override suspend fun saveValidated(deviceId: String, identity: GameIdentity) {
             saveStarted[deviceId]?.complete(Unit)
             saveRelease[deviceId]?.let { gate ->
-                withContext(NonCancellable) { gate.await() }
+                withContext(NonCancellable) { awaitGate(gate) }
             }
             saved += deviceId to identity
             trustedDevices += deviceId
@@ -658,6 +854,11 @@ class DeviceSessionTest {
         private val writeStarted: CompletableDeferred<Unit>? = null,
         private val writeRelease: CompletableDeferred<Unit> = completedGate(),
         private val ignoreWriteCancellation: Boolean = false,
+        private val disconnectStarted: CompletableDeferred<Unit>? = null,
+        private val disconnectRelease: CompletableDeferred<Unit> = completedGate(),
+        private val ignoreDisconnectCancellation: Boolean = false,
+        private val freezeEntered: CompletableDeferred<Unit>? = null,
+        private val freezeBeforeSendRelease: CompletableDeferred<Unit>? = null,
         private val events: MutableList<String> = mutableListOf(),
         private val label: String = "client",
     ) : SysBotbase {
@@ -679,15 +880,21 @@ class DeviceSessionTest {
             connectCalls++
             events += "$label.connect"
             if (ignoreConnectCancellation) {
-                withContext(NonCancellable) { connectRelease.await() }
+                withContext(NonCancellable) { awaitGate(connectRelease) }
             } else {
-                connectRelease.await()
+                awaitGate(connectRelease)
             }
         }
 
         override suspend fun disconnect() {
             disconnectCalls++
             events += "$label.disconnect"
+            disconnectStarted?.complete(Unit)
+            if (ignoreDisconnectCancellation) {
+                withContext(NonCancellable) { awaitGate(disconnectRelease) }
+            } else {
+                awaitGate(disconnectRelease)
+            }
         }
 
         override suspend fun recognizeGame(): GameIdentity {
@@ -695,9 +902,9 @@ class DeviceSessionTest {
             events += "$label.recognize"
             recognizeStarted?.complete(Unit)
             if (ignoreRecognitionCancellation) {
-                withContext(NonCancellable) { recognizeRelease.await() }
+                withContext(NonCancellable) { awaitGate(recognizeRelease) }
             } else {
-                recognizeRelease.await()
+                awaitGate(recognizeRelease)
             }
             return identity
         }
@@ -712,14 +919,16 @@ class DeviceSessionTest {
             writes += target to bytes.copyOf()
             writeStarted?.complete(Unit)
             if (ignoreWriteCancellation) {
-                withContext(NonCancellable) { writeRelease.await() }
+                withContext(NonCancellable) { awaitGate(writeRelease) }
             } else {
-                writeRelease.await()
+                awaitGate(writeRelease)
             }
             writeFailure?.let { throw it }
         }
 
         override suspend fun freeze(absoluteAddress: ULong, bytes: ByteArray) {
+            freezeEntered?.complete(Unit)
+            freezeBeforeSendRelease?.let { gate -> awaitGate(gate) }
             freezeCalls += absoluteAddress to bytes.copyOf()
             freezes[absoluteAddress] = bytes.copyOf()
             freezeFailure?.let { throw it }
@@ -767,5 +976,11 @@ class DeviceSessionTest {
         fun gameKey(identity: GameIdentity) = GameKey(identity.titleId, identity.buildId)
 
         fun completedGate() = CompletableDeferred(Unit)
+
+        const val TEST_GATE_TIMEOUT_MILLIS = 5_000L
+
+        suspend fun awaitGate(gate: CompletableDeferred<Unit>) {
+            withTimeout(TEST_GATE_TIMEOUT_MILLIS) { gate.await() }
+        }
     }
 }
