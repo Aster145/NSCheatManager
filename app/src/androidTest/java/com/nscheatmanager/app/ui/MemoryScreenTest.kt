@@ -11,15 +11,30 @@ class MemoryScreenTest {
 
     @Test fun controlsAndNativeLockAreAccessibleAtCompactWidth() {
         compose.setContent { MemoryScreen(MemoryUiState(), MemoryActions.None) }
-        compose.onNodeWithTag("memory-address").assertIsDisplayed()
+        compose.onNodeWithTag("memory-address").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("memory-read").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsDisplayed().assertIsToggleable()
+        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsDisplayed().assertIsToggleable().assertIsNotEnabled()
+    }
+
+    @Test fun lockedReadyStateIsCheckedAndDisablesEveryParameterWhileResultAndCopyRemainReachable() {
+        val lock = com.nscheatmanager.app.domain.LockedValue(com.nscheatmanager.app.core.model.MemoryTarget.Absolute(1u), 1u,
+            com.nscheatmanager.app.core.model.ValueType.Int8, com.nscheatmanager.app.domain.ImmutableBytes.copyOf(byteArrayOf(1)))
+        val state = MemoryUiState(ready = true, locked = lock,
+            result = MemoryResultUi(1u, "01", "1", com.nscheatmanager.app.core.model.ValueType.Int8, 0))
+        compose.setContent { MemoryScreen(state, MemoryActions.None) }
+        compose.onNodeWithTag("memory-address").assertIsNotEnabled()
+        compose.onNodeWithTag("memory-value").assertIsNotEnabled()
+        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsOn()
+        compose.onNodeWithTag("memory-result").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("memory-copy").assertIsDisplayed().assertHasClickAction()
     }
 
     @Test fun confirmationShowsBoundBytes() {
         val pending = WriteConfirmation(1, MemoryViewModelTestData.key,
             com.nscheatmanager.app.core.model.MemoryTarget.Absolute(0x10u),
-            com.nscheatmanager.app.core.model.ValueType.Int32, byteArrayOf(42,0,0,0))
+            MemoryTargetDisplay(AddressMode.Absolute, "10", 0x10u),
+            com.nscheatmanager.app.core.model.ValueType.Int32, "42",
+            com.nscheatmanager.app.domain.ImmutableBytes.copyOf(byteArrayOf(42,0,0,0)))
         compose.setContent { MemoryScreen(MemoryUiState(confirmation = pending), MemoryActions.None) }
         compose.onNodeWithTag("memory-confirm").assertIsDisplayed()
         compose.onNodeWithText("2A 00 00 00", substring = true).assertExists()

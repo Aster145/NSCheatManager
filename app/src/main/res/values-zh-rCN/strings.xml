@@ -121,4 +121,5 @@
     <string name="memory_pending_cleanup">待清理锁定：%1$d</string><string name="memory_error_session">请先连接并识别当前游戏。</string>
     <string name="memory_error_address">请输入有效的无符号十六进制地址。</string><string name="memory_error_length">读取长度必须为 1–4096 字节。</string>
     <string name="memory_error_value">数值与所选类型不匹配。</string><string name="memory_error_operation">内存操作失败。</string><string name="memory_error_changed">设备或游戏已切换，结果已丢弃。</string>
+    <string name="memory_target_absolute">绝对地址 0x%1$s</string><string name="memory_target_main">Main + 0x%1$s</string><string name="memory_target_heap">Heap + 0x%1$s</string>
 </resources>

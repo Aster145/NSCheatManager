@@ -305,21 +305,25 @@ class DeviceSession(
             catch (error: Throwable) { if (isConnectionLoss(error)) markAbnormalLoss(token, error); throw error }
         }
 
-    suspend fun writePrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) =
+    suspend fun writePrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray) {
+        val ownedBytes = bytes.copyOf()
         readyOperation(expected) { token, live, identity ->
             try {
-                val prepared = memoryUseCases.prepareWrite(identity, target, type, bytes.copyOf())
+                val prepared = memoryUseCases.prepareWrite(identity, target, type, ownedBytes)
                 checkpoint(token)
                 live.client.write(MemoryTarget.Absolute(prepared.absoluteAddress), prepared.bytes.copyToByteArray())
                 checkpoint(token)
             } catch (error: Throwable) { if (isConnectionLoss(error)) markAbnormalLoss(token, error); throw error }
         }
+    }
 
-    suspend fun lockPrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue =
-        readyOperation(expected) { token, live, identity ->
-            val prepared = memoryUseCases.prepareLock(identity, target, type, bytes.copyOf())
+    suspend fun lockPrepared(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue {
+        val ownedBytes = bytes.copyOf()
+        return readyOperation(expected) { token, live, identity ->
+            val prepared = memoryUseCases.prepareLock(identity, target, type, ownedBytes)
             commitPreparedLock(token, live, identity, prepared)
         }
+    }
 
     suspend fun unlockValue(expected: GameOperationKey, absoluteAddress: ULong) {
         readyOperation(expected) { token, live, _ -> unlockPrepared(token, live, absoluteAddress) }

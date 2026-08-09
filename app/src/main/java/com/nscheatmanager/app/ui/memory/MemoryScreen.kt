@@ -25,7 +25,7 @@ data class MemoryActions(
 ) { companion object { val None = MemoryActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}) } }
 
 @Composable fun MemoryScreen(state: MemoryUiState, actions: MemoryActions, modifier: Modifier = Modifier) {
-    val enabled = !state.parametersLocked && !state.busy
+    val enabled = state.ready && !state.parametersLocked && !state.busy
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.headlineSmall)
         Text(stringResource(R.string.memory_subtitle), style = MaterialTheme.typography.bodySmall)
@@ -43,8 +43,8 @@ data class MemoryActions(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(actions.read, Modifier.weight(1f).testTag("memory-read"), enabled = enabled) { Text(stringResource(R.string.memory_read)) }
             Button(actions.write, Modifier.weight(1f), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
-            Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = !state.busy, role = Role.Checkbox, onValueChange = actions.lock)) {
-                Checkbox(state.locked != null, null, enabled = !state.busy)
+            Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = state.ready && !state.busy, role = Role.Checkbox, onValueChange = actions.lock)) {
+                Checkbox(state.locked != null, null, enabled = state.ready && !state.busy)
                 Text(stringResource(R.string.memory_lock), Modifier.padding(top = 12.dp))
             }
         }
@@ -54,7 +54,7 @@ data class MemoryActions(
     }
     state.confirmation?.let { pending ->
         AlertDialog(onDismissRequest = { actions.dismiss(pending.id) }, title = { Text(stringResource(R.string.memory_confirm_title)) },
-            text = { Text(stringResource(R.string.memory_confirm_detail, pending.target.toString(), pending.bytes.size, pending.bytes.joinToString(" ") { "%02X".format(it) })) },
+            text = { Text(stringResource(R.string.memory_confirm_detail, targetText(pending.display), pending.bytes.size, pending.bytes.copyToByteArray().joinToString(" ") { "%02X".format(it) }) + "\n${pending.type.name}: ${pending.inputValue}\n0x${pending.display.resolvedAbsolute.toString(16).uppercase()}") },
             dismissButton = { TextButton({ actions.dismiss(pending.id) }) { Text(stringResource(R.string.cancel)) } },
             confirmButton = { Button({ actions.confirm(pending.id) }, Modifier.testTag("memory-confirm")) { Text(stringResource(R.string.confirm)) } })
     }
@@ -69,9 +69,14 @@ data class MemoryActions(
 @Composable private fun ResultCard(result: MemoryResultUi) {
     val clipboard = LocalClipboardManager.current
     Card(Modifier.fillMaxWidth().testTag("memory-result")) { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("0x${result.address.toString(16).uppercase()}"); Text(result.raw); Text("${result.type.name}: ${result.value}"); Text(result.atMillis.toString())
-        TextButton({ clipboard.setText(AnnotatedString("${result.raw}\n${result.value}")) }) { Text(stringResource(R.string.memory_copy)) }
+        Text("0x${result.address.toString(16).uppercase()}"); Text(result.raw); Text("${result.type.name}: ${result.value}"); Text(java.text.DateFormat.getTimeInstance().format(java.util.Date(result.atMillis)))
+        TextButton({ clipboard.setText(AnnotatedString("${result.raw}\n${result.value}")) }, Modifier.testTag("memory-copy")) { Text(stringResource(R.string.memory_copy)) }
     } }
+}
+@Composable private fun targetText(display: MemoryTargetDisplay) = when(display.mode) {
+    AddressMode.Absolute -> stringResource(R.string.memory_target_absolute, display.inputHex)
+    AddressMode.Main -> stringResource(R.string.memory_target_main, display.inputHex)
+    AddressMode.Heap -> stringResource(R.string.memory_target_heap, display.inputHex)
 }
 private fun MemoryError.resource() = when(this) {
     MemoryError.SessionRequired -> R.string.memory_error_session; MemoryError.InvalidAddress -> R.string.memory_error_address
