@@ -8,7 +8,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.lifecycleScope
 import com.nscheatmanager.app.ui.NSCheatManagerApp
@@ -25,11 +27,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         lifecycleScope.launch {
-            dependencies.preferences.languageTag.collect(::applyLocale)
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                dependencies.preferences.languageTag.collect(::applyLocale)
+            }
         }
         setContent {
             NSCheatManagerTheme {
-                val state by settingsViewModel.uiState.collectAsState()
+                val state by settingsViewModel.uiState.collectAsStateWithLifecycle()
                 NSCheatManagerApp(
                     settingsState = state,
                     settingsActions = SettingsActions(
@@ -43,6 +47,7 @@ class MainActivity : AppCompatActivity() {
                         dismissEditor = settingsViewModel::dismissEditor,
                     ),
                     versionName = BuildConfig.VERSION_NAME,
+                    settingsMessages = settingsViewModel.messages,
                 )
             }
         }

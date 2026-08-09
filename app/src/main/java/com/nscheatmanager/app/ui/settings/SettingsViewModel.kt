@@ -7,6 +7,8 @@ import com.nscheatmanager.app.data.preferences.AppPreferences
 import com.nscheatmanager.app.domain.DeviceProfile
 import com.nscheatmanager.app.domain.DeviceRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -18,6 +20,8 @@ enum class DeviceEditorError {
     DUPLICATE_HOST,
     SAVE_FAILED,
 }
+
+enum class SettingsMessage { DELETE_FAILED, DEFAULT_FAILED, LANGUAGE_FAILED }
 
 interface DeviceSettingsRepository {
     val devices: Flow<List<DeviceProfile>>
@@ -47,6 +51,8 @@ class SettingsViewModel(
 ) : ViewModel() {
     private val mutableUiState = kotlinx.coroutines.flow.MutableStateFlow(SettingsUiState())
     val uiState: kotlinx.coroutines.flow.StateFlow<SettingsUiState> = mutableUiState
+    private val mutableMessages = MutableSharedFlow<SettingsMessage>(extraBufferCapacity = 1)
+    val messages = mutableMessages.asSharedFlow()
 
     init {
         viewModelScope.launch {
@@ -62,7 +68,7 @@ class SettingsViewModel(
     }
 
     fun openAddDevice() {
-        mutableUiState.update { it.copy(editor = DeviceEditorUiState(), message = null) }
+        mutableUiState.update { it.copy(editor = DeviceEditorUiState()) }
     }
 
     fun openEditDevice(profile: DeviceProfile) {
@@ -76,13 +82,12 @@ class SettingsViewModel(
                     ftpPort = profile.ftpPort.toString(),
                     noexsPort = profile.noexsPort.toString(),
                 ),
-                message = null,
             )
         }
     }
 
     fun updateEditor(editor: DeviceEditorUiState) {
-        mutableUiState.update { it.copy(editor = editor.copy(error = null), message = null) }
+        mutableUiState.update { it.copy(editor = editor.copy(error = null)) }
     }
 
     fun dismissEditor() {
@@ -142,14 +147,14 @@ class SettingsViewModel(
     fun deleteDevice(deviceId: String) {
         viewModelScope.launch {
             runCatching { repository.deleteDevice(deviceId) }
-                .onFailure { mutableUiState.update { state -> state.copy(message = "delete_failed") } }
+                .onFailure { mutableMessages.emit(SettingsMessage.DELETE_FAILED) }
         }
     }
 
     fun setDefaultDevice(deviceId: String) {
         viewModelScope.launch {
             runCatching { repository.setDefaultDevice(deviceId) }
-                .onFailure { mutableUiState.update { state -> state.copy(message = "default_failed") } }
+                .onFailure { mutableMessages.emit(SettingsMessage.DEFAULT_FAILED) }
         }
     }
 
@@ -163,7 +168,8 @@ class SettingsViewModel(
                 preferences.setLanguageTag(languageTag)
                 applyLocale(languageTag)
             } catch (_: Exception) {
-                mutableUiState.update { it.copy(languageTag = previous, message = "language_failed") }
+                mutableUiState.update { it.copy(languageTag = previous) }
+                mutableMessages.emit(SettingsMessage.LANGUAGE_FAILED)
             }
         }
     }

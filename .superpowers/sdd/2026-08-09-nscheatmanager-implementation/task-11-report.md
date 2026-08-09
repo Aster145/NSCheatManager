@@ -21,3 +21,12 @@ Observed RED failures before implementing settings, About, ViewModel validation/
 - `git diff --check` — PASS
 
 Lint completes with existing/advisory warnings and no errors.
+
+## Review fix round 1
+
+- Replaced raw state strings with typed, one-shot `SettingsMessage` events rendered as localized Snackbars for delete/default/language failures.
+- Added localized, clickable overflow semantics and explicit labeled/stateful default-device radio semantics; narrow cards now put edit/delete actions on their own row.
+- Added a production Activity locale E2E covering English and Simplified Chinese, AppCompat locale state, activity recreation, and DataStore restoration.
+- Strengthened the 320 dp test with a long device name and visible edit/delete controls.
+- Changed preference collection to `repeatOnLifecycle(STARTED)` and Compose state collection to `collectAsStateWithLifecycle`.
+- Final round verification: `testDebugUnitTest connectedDebugAndroidTest lintDebug assembleDebug` PASS (24 instrumentation tests).

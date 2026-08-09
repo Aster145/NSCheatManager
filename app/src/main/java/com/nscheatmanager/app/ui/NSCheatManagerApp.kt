@@ -8,6 +8,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -31,6 +34,9 @@ import com.nscheatmanager.app.ui.about.AboutScreen
 import com.nscheatmanager.app.ui.settings.DeviceEditorUiState
 import com.nscheatmanager.app.ui.settings.SettingsScreen
 import com.nscheatmanager.app.ui.settings.SettingsUiState
+import com.nscheatmanager.app.ui.settings.SettingsMessage
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 data class SettingsActions(
     val add: () -> Unit,
@@ -61,6 +67,7 @@ fun NSCheatManagerApp(
     settingsState: SettingsUiState,
     settingsActions: SettingsActions,
     versionName: String,
+    settingsMessages: Flow<SettingsMessage> = emptyFlow(),
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
@@ -73,8 +80,9 @@ fun NSCheatManagerApp(
             if (mainRoute) TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
-                    TextButton(
-                        modifier = Modifier.testTag("overflow-menu"),
+                    val moreOptions = stringResource(R.string.more_options)
+                    IconButton(
+                        modifier = Modifier.testTag("overflow-menu").semantics { contentDescription = moreOptions },
                         onClick = { menuExpanded = true },
                     ) { Text("⋮") }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -125,6 +133,7 @@ fun NSCheatManagerApp(
                     onEditorChanged = settingsActions.editorChanged,
                     onSaveEditor = settingsActions.saveEditor,
                     onDismissEditor = settingsActions.dismissEditor,
+                    messages = settingsMessages,
                     modifier = Modifier.testTag("settings-content"),
                 )
             }

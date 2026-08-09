@@ -24,15 +24,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -40,6 +47,8 @@ import androidx.compose.ui.window.Dialog
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.data.preferences.AppPreferences
 import com.nscheatmanager.app.domain.DeviceProfile
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 data class DeviceEditorUiState(
     val id: String? = null,
@@ -56,7 +65,6 @@ data class SettingsUiState(
     val languageTag: String = AppPreferences.CHINESE_LANGUAGE_TAG,
     val editor: DeviceEditorUiState? = null,
     val isSaving: Boolean = false,
-    val message: String? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,8 +80,22 @@ fun SettingsScreen(
     onEditorChanged: (DeviceEditorUiState) -> Unit,
     onSaveEditor: () -> Unit,
     onDismissEditor: () -> Unit,
+    messages: Flow<SettingsMessage> = emptyFlow(),
     modifier: Modifier = Modifier,
 ) {
+    val snackbar = remember { SnackbarHostState() }
+    val deleteFailed = stringResource(R.string.error_delete_device)
+    val defaultFailed = stringResource(R.string.error_default_device)
+    val languageFailed = stringResource(R.string.error_language_change)
+    LaunchedEffect(messages) {
+        messages.collect { message ->
+            snackbar.showSnackbar(when (message) {
+                SettingsMessage.DELETE_FAILED -> deleteFailed
+                SettingsMessage.DEFAULT_FAILED -> defaultFailed
+                SettingsMessage.LANGUAGE_FAILED -> languageFailed
+            })
+        }
+    }
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -93,6 +115,7 @@ fun SettingsScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar, Modifier.testTag("settings-message")) },
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
@@ -180,6 +203,8 @@ private fun DeviceCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val defaultLabel = stringResource(R.string.set_default_device, device.name)
+    val defaultState = stringResource(if (device.isDefault) R.string.selected else R.string.not_selected)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -195,7 +220,14 @@ private fun DeviceCard(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = device.isDefault, onClick = onSetDefault)
+                RadioButton(
+                    selected = device.isDefault,
+                    onClick = onSetDefault,
+                    modifier = Modifier.semantics {
+                        contentDescription = defaultLabel
+                        stateDescription = defaultState
+                    },
+                )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(device.name, style = MaterialTheme.typography.titleSmall)
                     Text(
@@ -208,8 +240,14 @@ private fun DeviceCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = onEdit) { Text(stringResource(R.string.edit)) }
-                TextButton(onClick = onDelete) { Text(stringResource(R.string.delete)) }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onEdit, modifier = Modifier.testTag("edit-${device.id}")) {
+                    Text(stringResource(R.string.edit))
+                }
+                TextButton(onClick = onDelete, modifier = Modifier.testTag("delete-${device.id}")) {
+                    Text(stringResource(R.string.delete))
+                }
             }
             HorizontalDivider()
             Row(

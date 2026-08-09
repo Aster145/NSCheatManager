@@ -21,6 +21,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.nscheatmanager.app.domain.DeviceProfile
@@ -36,6 +40,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.withTimeout
 import org.junit.Rule
 import org.junit.Assert.assertEquals
@@ -50,7 +56,7 @@ class SettingsAndAboutTest {
     @Test
     fun settingsShowsMultipleDevicesDefaultAndPortsAt320Dp() {
         val devices = listOf(
-            DeviceProfile("living", "Living room Switch", "192.168.1.35", isDefault = true),
+            DeviceProfile("living", "Living room Switch with a deliberately very long accessible name", "192.168.1.35", isDefault = true),
             DeviceProfile("bedroom", "Bedroom Switch", "192.168.1.52"),
         )
 
@@ -73,7 +79,9 @@ class SettingsAndAboutTest {
         }
 
         compose.onNodeWithTag("settings-content").assertWidthIsEqualTo(320.dp)
-        compose.onNodeWithText("Living room Switch").assertIsDisplayed()
+        compose.onNodeWithText("Living room Switch", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("edit-living").assertIsDisplayed()
+        compose.onNodeWithTag("delete-living").assertIsDisplayed()
         compose.onNodeWithText("Bedroom Switch").assertIsDisplayed()
         compose.onAllNodesWithText("6000").assertCountEquals(2)
         compose.onAllNodesWithText("21").assertCountEquals(2)
@@ -202,6 +210,23 @@ class SettingsAndAboutTest {
     }
 
     @Test
+    fun settingsViewModelEmitsTypedOneShotFailures() = runBlocking {
+        val repository = FakeDeviceRepository().apply { failMutations = true }
+        val preferences = FakeLanguagePreferences("zh-CN").apply { failWrites = true }
+        val viewModel = SettingsViewModel(repository, preferences)
+
+        val delete = async(start = CoroutineStart.UNDISPATCHED) { viewModel.messages.first() }
+        viewModel.deleteDevice("id")
+        assertEquals(com.nscheatmanager.app.ui.settings.SettingsMessage.DELETE_FAILED, delete.await())
+        val default = async(start = CoroutineStart.UNDISPATCHED) { viewModel.messages.first() }
+        viewModel.setDefaultDevice("id")
+        assertEquals(com.nscheatmanager.app.ui.settings.SettingsMessage.DEFAULT_FAILED, default.await())
+        val language = async(start = CoroutineStart.UNDISPATCHED) { viewModel.messages.first() }
+        viewModel.selectLanguage("en")
+        assertEquals(com.nscheatmanager.app.ui.settings.SettingsMessage.LANGUAGE_FAILED, language.await())
+    }
+
+    @Test
     fun settingsEditorExposesAllFieldsAndForwardsEditedValuesToSave() {
         var saved: com.nscheatmanager.app.ui.settings.DeviceEditorUiState? = null
         compose.setContent {
@@ -264,6 +289,19 @@ class SettingsAndAboutTest {
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
     }
 
+    @Test
+    fun overflowAndDefaultSelectionExposeAccessibleActions() {
+        compose.setContent {
+            NSCheatManagerApp(SettingsUiState(languageTag = "en"), SettingsActions.None, "1")
+        }
+        compose.onNode(
+            SemanticsMatcher.keyIsDefined(SemanticsProperties.ContentDescription) and
+                SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.TestTag, "overflow-menu"),
+        ).assertHasClickAction().performClick()
+        compose.onNodeWithTag("menu-settings").performClick()
+        compose.onNodeWithTag("settings-content").assertIsDisplayed()
+    }
+
     private suspend fun awaitState(
         viewModel: SettingsViewModel,
         predicate: (SettingsUiState) -> Boolean,
@@ -280,6 +318,7 @@ class SettingsAndAboutTest {
         val saved = mutableListOf<DeviceProfile>()
         val deleted = mutableListOf<String>()
         val defaults = mutableListOf<String>()
+        var failMutations = false
 
         override suspend fun addDevice(
             name: String,
@@ -306,11 +345,13 @@ class SettingsAndAboutTest {
         }
 
         override suspend fun deleteDevice(deviceId: String) {
+            if (failMutations) error("delete")
             deleted += deviceId
             devices.value = devices.value.filterNot { it.id == deviceId }
         }
 
         override suspend fun setDefaultDevice(deviceId: String) {
+            if (failMutations) error("default")
             defaults += deviceId
             devices.value = devices.value.map { it.copy(isDefault = it.id == deviceId) }
         }
@@ -319,8 +360,10 @@ class SettingsAndAboutTest {
     private class FakeLanguagePreferences(initial: String) : LanguagePreferenceStore {
         override val languageTag = MutableStateFlow(initial)
         val writes = mutableListOf<String>()
+        var failWrites = false
 
         override suspend fun setLanguageTag(languageTag: String) {
+            if (failWrites) error("language")
             writes += languageTag
             this.languageTag.value = languageTag
         }
