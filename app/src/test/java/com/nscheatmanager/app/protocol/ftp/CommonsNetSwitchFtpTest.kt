@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -373,6 +374,52 @@ class CommonsNetSwitchFtpTest {
         }
     }
 
+    @Test
+    fun cancellationDoesNotCompleteUntilFreshRecoveryFinishes() = runTest {
+        FakeFtpServer().use { server ->
+            val old = "old cheat".toByteArray()
+            server.files[cheatPath] = old
+            server.blockStorePath = cheatPath
+            server.pauseStorePath = cheatPath
+            server.pauseStoreAttempt = 2
+            val payload = ByteArray(1024 * 1024) { 0x44 }
+            val boundedClient = client(
+                server,
+                maxFileBytes = payload.size,
+                dataTimeoutMillis = 1_000,
+                totalTransferTimeoutMillis = 5_000,
+            )
+            val transfer = launch {
+                boundedClient.uploadCurrent(
+                    titleId,
+                    buildId,
+                    CurrentGameFiles(payload, null),
+                    DirectOverwriteAuthorization.confirmed(),
+                )
+            }
+            withTimeout(2_000) { server.awaitBlockedStore() }
+
+            transfer.cancel()
+            kotlinx.coroutines.yield()
+            val cancellation = async { transfer.join() }
+            server.releaseBlockedStore()
+            assertTrue(server.commands.joinToString(" | "), server.awaitPausedRecoveryStore())
+            val completedBeforeRecovery = cancellation.isCompleted
+            server.releasePausedRecoveryStore()
+            cancellation.await()
+
+            assertFalse(completedBeforeRecovery)
+            val newer = "newer cheat".toByteArray()
+            client(server).uploadCurrent(
+                titleId,
+                buildId,
+                CurrentGameFiles(newer, null),
+                DirectOverwriteAuthorization.confirmed(),
+            )
+            assertArrayEquals(newer, server.files.getValue(cheatPath))
+        }
+    }
+
     private fun client(
         server: FakeFtpServer,
         maxFileBytes: Int = 1024 * 1024,
@@ -399,6 +446,9 @@ private class FakeFtpServer(
     private val activeData = java.util.concurrent.atomic.AtomicInteger()
     private val blockedStoreAccepted = java.util.concurrent.CountDownLatch(1)
     private val releaseBlockedStore = java.util.concurrent.CountDownLatch(1)
+    private val pausedRecoveryStore = java.util.concurrent.CountDownLatch(1)
+    private val releasePausedRecoveryStore = java.util.concurrent.CountDownLatch(1)
+    private val storeAttempts = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
     val port: Int = listener.localPort
     val files: MutableMap<String, ByteArray> = ConcurrentHashMap()
     val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -414,6 +464,8 @@ private class FakeFtpServer(
     @Volatile var denyBackupDeletes: Boolean = false
     @Volatile var failRenameToPath: String? = null
     @Volatile var blockStorePath: String? = null
+    @Volatile var pauseStorePath: String? = null
+    @Volatile var pauseStoreAttempt: Int = 2
     @Volatile private var closed = false
 
     init {
@@ -452,6 +504,12 @@ private class FakeFtpServer(
 
     fun releaseBlockedStore() {
         releaseBlockedStore.countDown()
+    }
+
+    fun awaitPausedRecoveryStore(): Boolean = pausedRecoveryStore.await(4, TimeUnit.SECONDS)
+
+    fun releasePausedRecoveryStore() {
+        releasePausedRecoveryStore.countDown()
     }
 
     private fun handleControl(socket: Socket) {
@@ -524,6 +582,9 @@ private class FakeFtpServer(
                     }
                     "STOR" -> {
                         reply("150 opening data")
+                        val storeAttempt = storeAttempts.computeIfAbsent(argument) {
+                            java.util.concurrent.atomic.AtomicInteger()
+                        }.incrementAndGet()
                         val received: ByteArray? = passive!!.accept().use { data ->
                             activeData.incrementAndGet()
                             try {
@@ -535,6 +596,10 @@ private class FakeFtpServer(
                                     releaseBlockedStore.await(10, TimeUnit.SECONDS)
                                     val bytes = data.getInputStream().readBytes()
                                     bytes.takeIf { files[argument] === marker }
+                                } else if (pauseStorePath == argument && storeAttempt >= pauseStoreAttempt) {
+                                    pausedRecoveryStore.countDown()
+                                    releasePausedRecoveryStore.await(10, TimeUnit.SECONDS)
+                                    data.getInputStream().readBytes()
                                 } else {
                                     data.getInputStream().readBytes()
                                 }
@@ -638,6 +703,7 @@ private class FakeFtpServer(
     override fun close() {
         closed = true
         releaseBlockedStore.countDown()
+        releasePausedRecoveryStore.countDown()
         listener.close()
         executor.shutdownNow()
         executor.awaitTermination(2, TimeUnit.SECONDS)

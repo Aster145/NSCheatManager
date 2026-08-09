@@ -15,13 +15,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.schedule
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
@@ -346,9 +346,7 @@ class CommonsNetSwitchFtp(
         }
         try {
             val result = runCatching {
-                withContext(dispatcher) {
-                    runCancellableBlocking(client) { withClientBlocking(client, operation) }
-                }
+                runCancellableBlocking(client) { withClientBlocking(client, operation) }
             }
             if (timedOut.get()) {
                 val timeout = FtpTimeoutError("FTP total transfer deadline exceeded")
@@ -364,23 +362,40 @@ class CommonsNetSwitchFtp(
     private suspend fun <T> runCancellableBlocking(
         client: AbortableFtpClient,
         operation: () -> T,
-    ): T = suspendCancellableCoroutine { continuation ->
-        val workerReference = AtomicReference<Job?>()
-        continuation.invokeOnCancellation {
-            client.abortNow()
-            workerReference.get()?.cancel()
+    ): T = supervisorScope {
+        val workerFailure = AtomicReference<Throwable?>()
+        val worker = async(dispatcher) {
+            withContext(NonCancellable) {
+                try {
+                    operation()
+                } catch (error: Throwable) {
+                    workerFailure.set(error)
+                    throw error
+                }
+            }
         }
-        val worker = CoroutineScope(dispatcher).launch(start = CoroutineStart.LAZY) {
-            continuation.resumeWith(runCatching(operation))
-        }
-        workerReference.set(worker)
-        if (continuation.isCancelled) {
+        try {
+            worker.await()
+        } catch (cancellation: CancellationException) {
             client.abortNow()
-            worker.cancel()
-        } else {
-            worker.start()
+            val cleanupFailure = withContext(NonCancellable) {
+                runCatching {
+                    withTimeout(cancellationCleanupTimeoutMillis()) {
+                        worker.join()
+                    }
+                }.exceptionOrNull()
+            }
+            workerFailure.get()
+                ?.takeUnless { it === cancellation || it is CancellationException }
+                ?.let(cancellation::addSuppressed)
+            cleanupFailure?.let(cancellation::addSuppressed)
+            throw cancellation
         }
     }
+
+    private fun cancellationCleanupTimeoutMillis(): Long =
+        minOf(totalTransferTimeoutMillis, MAX_RECOVERY_TIMEOUT_MILLIS).toLong() +
+            connectTimeoutMillis.toLong() + CLEANUP_TIMEOUT_GRACE_MILLIS
 
     private fun <T> withClientBlocking(client: AbortableFtpClient, operation: (FTPClient) -> T): T {
         try {
@@ -536,6 +551,7 @@ class CommonsNetSwitchFtp(
         const val DEFAULT_TOTAL_TRANSFER_TIMEOUT_MILLIS = 30_000
         const val DEFAULT_MAX_FILE_BYTES = 1024 * 1024
         private const val MAX_RECOVERY_TIMEOUT_MILLIS = 5_000
+        private const val CLEANUP_TIMEOUT_GRACE_MILLIS = 1_000L
         private const val ANONYMOUS_USER = "anonymous"
         private const val ANONYMOUS_PASSWORD = "anonymous@"
         private val RENAME_UNSUPPORTED_REPLIES = setOf(500, 501, 502, 504)
