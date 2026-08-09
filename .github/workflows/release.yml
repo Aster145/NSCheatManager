@@ -1,0 +1,140 @@
+name: Release candidate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag in exact v<versionName> form
+        required: true
+        type: string
+      create_draft_release:
+        description: Create or update a draft GitHub Release after approval
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - name: Require an existing tag at HEAD
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$') { throw "Invalid release tag: $env:RELEASE_TAG" }
+          git rev-parse --verify "refs/tags/$env:RELEASE_TAG^{commit}" | Out-Null
+          if ((git rev-parse HEAD) -ne (git rev-list -n 1 $env:RELEASE_TAG)) { throw 'Checked-out commit does not match tag' }
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+      - name: Match tag to unique Gradle versionName
+        id: version
+        shell: pwsh
+        run: |
+          $text = Get-Content -Raw -LiteralPath app/build.gradle.kts
+          $matches = [regex]::Matches($text, '(?m)^\s*versionName\s*=\s*"([^"]+)"\s*$')
+          if ($matches.Count -ne 1) { throw "Expected exactly one versionName, found $($matches.Count)" }
+          $version = $matches[0].Groups[1].Value
+          if ($env:RELEASE_TAG -cne "v$version") { throw "Tag $env:RELEASE_TAG does not equal v$version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Require signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          foreach ($name in 'SIGNING_KEY','STORE_PASSWORD','KEY_ALIAS','KEY_PASSWORD') {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { throw "Required signing secret is missing: $name" }
+          }
+      - name: Test, lint, and build unsigned release
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+      - name: Sign, verify, and name release APK
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $keystore = Join-Path $env:RUNNER_TEMP 'release-keystore.jks'
+          try {
+            [IO.File]::WriteAllBytes($keystore, [Convert]::FromBase64String($env:SIGNING_KEY))
+            $unsigned = @(Get-ChildItem app/build/outputs/apk/release -File -Filter '*-unsigned.apk')
+            if ($unsigned.Count -ne 1) { throw "Expected one unsigned APK, found $($unsigned.Count)" }
+            $tools = Get-ChildItem (Join-Path $env:ANDROID_HOME 'build-tools') -Directory | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+            if ($null -eq $tools) { throw 'Android build-tools not found' }
+            $apksigner = Join-Path $tools.FullName 'apksigner'
+            $target = "app/build/outputs/apk/release/NSCheatManager-v${{ steps.version.outputs.version }}.apk"
+            & $apksigner sign --ks $keystore --ks-pass "pass:$env:STORE_PASSWORD" --ks-key-alias $env:KEY_ALIAS --key-pass "pass:$env:KEY_PASSWORD" --out $target $unsigned[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw 'apksigner sign failed' }
+            & $apksigner verify --verbose --print-certs $target
+            if ($LASTEXITCODE -ne 0) { throw 'apksigner verify failed' }
+            ./.github/scripts/verify-release.ps1 -Version '${{ steps.version.outputs.version }}'
+          } finally {
+            if (Test-Path -LiteralPath $keystore) { Remove-Item -LiteralPath $keystore -Force }
+          }
+      - name: Upload signed release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: NSCheatManager-${{ env.RELEASE_TAG }}
+          path: |
+            app/build/outputs/apk/release/NSCheatManager-${{ env.RELEASE_TAG }}.apk
+            app/build/outputs/apk/release/NSCheatManager-${{ env.RELEASE_TAG }}.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.create_draft_release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Download approved candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: NSCheatManager-${{ inputs.tag }}
+          path: release-artifacts
+      - name: Create draft release only
+        shell: pwsh
+        run: |
+          $notes = Get-Content -Raw -LiteralPath .github/RELEASE_TEMPLATE.md
+          $existing = gh release view $env:RELEASE_TAG --json isDraft --jq '.isDraft' 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($existing -ne 'true') { throw 'Refusing to modify an already published release' }
+            gh release upload $env:RELEASE_TAG release-artifacts/* --clobber
+          } else {
+            gh release create $env:RELEASE_TAG release-artifacts/* --draft --verify-tag --title "NSCheatManager $env:RELEASE_TAG" --notes $notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release operation failed' }

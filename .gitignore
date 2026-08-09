@@ -1,6 +1,16 @@
 .superpowers/
 .worktrees/
 .gradle/
+.kotlin/
 build/
 local.properties
 *.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties

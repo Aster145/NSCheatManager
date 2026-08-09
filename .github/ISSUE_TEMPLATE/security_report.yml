@@ -1,0 +1,35 @@
+name: Sanitized security report / 脱敏安全报告
+description: Public form for non-sensitive security problems only / 仅用于不含敏感细节的公开安全问题
+title: "[Security] "
+labels: [security]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is public. Stop if the report requires secrets, personal data, or working exploit details; follow SECURITY.md instead.
+        此表单公开可见。若必须包含秘密、个人数据或可用利用细节，请停止并改按 SECURITY.md 操作。
+  - type: textarea
+    id: impact
+    attributes:
+      label: Sanitized impact / 脱敏影响
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe minimal reproduction / 安全的最小复现
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Affected version / 受影响版本
+    validations:
+      required: true
+  - type: checkboxes
+    id: public
+    attributes:
+      label: Disclosure confirmation / 披露确认
+      options:
+        - label: This report contains no secrets, private data, real IPs, or actionable exploit payload. / 本报告不含秘密、私有数据、真实 IP 或可直接利用的载荷。
+          required: true

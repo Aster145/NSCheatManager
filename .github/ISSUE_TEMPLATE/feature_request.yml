@@ -1,0 +1,36 @@
+name: Feature request / 功能建议
+description: Propose a scoped, safe improvement / 提议范围明确且安全的改进
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题
+      description: Describe the user need, not only a proposed implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议行为
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and compatibility / 替代方案与兼容性
+      description: Include Android API, Switch service, file-format, and migration implications where relevant.
+  - type: textarea
+    id: risks
+    attributes:
+      label: Safety and data risks / 安全与数据风险
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation / 范围确认
+      options:
+        - label: This request is for owned or authorized devices and does not seek access-control bypass or covert behavior. / 本建议仅用于自有或获授权设备，不要求绕过访问控制或隐藏行为。
+          required: true

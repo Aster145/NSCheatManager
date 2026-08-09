@@ -1,0 +1,62 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible problem without sensitive device data / 报告可复现问题，请勿附敏感设备数据
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先阅读 SECURITY.md。不要提交真实 IP、密码、密钥库、存档或完整私密日志。
+        Read SECURITY.md first. Do not post real IPs, passwords, keystores, saves, or private full logs.
+  - type: input
+    id: version
+    attributes:
+      label: App version / 应用版本
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version and device / Android 版本与设备
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 模块
+      options: [Connection, Recognition, Cheats, Memory, FTP, ZIP, Editor, Settings, About, Build]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Sanitized Switch environment / 已脱敏 Switch 环境
+      description: Service versions and open/closed relevant ports; do not include the IP.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps / 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized evidence / 实际行为与脱敏证据
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Safety confirmation / 安全确认
+      options:
+        - label: I used an owned or authorized device and removed sensitive data. / 我使用自有或获授权设备并已移除敏感数据。
+          required: true
