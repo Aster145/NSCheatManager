@@ -15,6 +15,10 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.system.measureTimeMillis
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -58,6 +62,18 @@ class CommonsNetSwitchFtpTest {
         assertEquals(null, result.notes)
         assertEquals(listOf(cheatPath, notesPath), server.retrievedPaths)
     } }
+
+    @Test
+    fun retrievePermissionDeniedIsNeverReportedAsMissing() = runTest {
+        FakeFtpServer().use { server ->
+            server.permissionDeniedRetrievePaths += cheatPath
+
+            val error = runCatching { client(server).downloadCurrent(titleId, buildId) }.exceptionOrNull()
+
+            assertTrue(error is FtpReplyError)
+            assertEquals("RETR", (error as FtpReplyError).operation)
+        }
+    }
 
     @Test
     fun safeUploadStagesBacksUpRenamesAndVerifiesBothFiles() = runTest { FakeFtpServer().use { server ->
@@ -139,6 +155,49 @@ class CommonsNetSwitchFtpTest {
 
             assertTrue(error is FtpVerificationError)
             assertArrayEquals(old, server.files.getValue(cheatPath))
+            assertFalse(server.files.keys.any { ".nscheatmanager-" in it })
+        }
+    }
+
+    @Test
+    fun permissionDeniedBackupDeleteIsReportedAsRetainedRecoveryArtifact() = runTest {
+        FakeFtpServer().use { server ->
+            server.files[cheatPath] = "old cheat".toByteArray()
+            server.denyBackupDeletes = true
+
+            val result = client(server).uploadCurrent(
+                titleId,
+                buildId,
+                CurrentGameFiles(cheat, null),
+                null,
+            ) as FtpUploadResult.Uploaded
+
+            assertTrue(result.retainedRecoveryArtifacts)
+            assertTrue(server.files.keys.any { ".nscheatmanager-backup-" in it })
+        }
+    }
+
+    @Test
+    fun multiFilePublishRenameFailureRestoresBothOldFiles() = runTest {
+        FakeFtpServer().use { server ->
+            val oldCheat = "old cheat".toByteArray()
+            val oldNotes = "old notes".toByteArray()
+            server.files[cheatPath] = oldCheat
+            server.files[notesPath] = oldNotes
+            server.failRenameToPath = notesPath
+
+            val error = runCatching {
+                client(server).uploadCurrent(
+                    titleId,
+                    buildId,
+                    CurrentGameFiles(cheat, "new notes".toByteArray()),
+                    null,
+                )
+            }.exceptionOrNull()
+
+            assertTrue(error is FtpReplyError)
+            assertArrayEquals(oldCheat, server.files.getValue(cheatPath))
+            assertArrayEquals(oldNotes, server.files.getValue(notesPath))
             assertFalse(server.files.keys.any { ".nscheatmanager-" in it })
         }
     }
@@ -229,15 +288,102 @@ class CommonsNetSwitchFtpTest {
         assertTrue(server.awaitNoControlConnections())
     } }
 
+    @Test
+    fun totalDeadlineClosesADataSocketBlockedDuringUpload() = runTest {
+        FakeFtpServer().use { server ->
+            server.blockStorePath = cheatPath + ".nscheatmanager"
+            val payload = ByteArray(1024 * 1024) { 0x41 }
+            val boundedClient = client(
+                server,
+                maxFileBytes = payload.size,
+                dataTimeoutMillis = 5_000,
+                totalTransferTimeoutMillis = 250,
+            )
+
+            val elapsed = measureTimeMillis {
+                val error = runCatching {
+                    boundedClient.uploadCurrent(titleId, buildId, CurrentGameFiles(payload, null), null)
+                }.exceptionOrNull()
+                assertTrue(error is FtpTimeoutError)
+            }
+
+            assertTrue("deadline took $elapsed ms", elapsed < 2_000)
+            server.releaseBlockedStore()
+            assertTrue(server.awaitNoControlConnections())
+            assertTrue(server.awaitNoDataConnections())
+            assertFalse(server.files.keys.any { ".nscheatmanager-" in it })
+        }
+    }
+
+    @Test
+    fun cancellationClosesADataSocketBlockedDuringUpload() = runTest {
+        FakeFtpServer().use { server ->
+            server.blockStorePath = cheatPath + ".nscheatmanager"
+            val payload = ByteArray(1024 * 1024) { 0x42 }
+            val boundedClient = client(
+                server,
+                maxFileBytes = payload.size,
+                dataTimeoutMillis = 5_000,
+                totalTransferTimeoutMillis = 5_000,
+            )
+            val transfer = launch {
+                boundedClient.uploadCurrent(titleId, buildId, CurrentGameFiles(payload, null), null)
+            }
+            withTimeout(2_000) { server.awaitBlockedStore() }
+
+            val elapsed = measureTimeMillis { transfer.cancelAndJoin() }
+
+            assertTrue("cancellation took $elapsed ms", elapsed < 2_000)
+            server.releaseBlockedStore()
+            assertTrue(server.awaitNoControlConnections())
+            assertTrue(server.awaitNoDataConnections())
+            assertFalse(server.files.keys.any { ".nscheatmanager-" in it })
+        }
+    }
+
+    @Test
+    fun directOverwriteDeadlineUsesFreshConnectionToRestoreOldTarget() = runTest {
+        FakeFtpServer().use { server ->
+            val old = "old cheat".toByteArray()
+            server.files[cheatPath] = old
+            server.blockStorePath = cheatPath
+            val payload = ByteArray(1024 * 1024) { 0x43 }
+            val boundedClient = client(
+                server,
+                maxFileBytes = payload.size,
+                dataTimeoutMillis = 5_000,
+                totalTransferTimeoutMillis = 250,
+            )
+
+            val error = runCatching {
+                boundedClient.uploadCurrent(
+                    titleId,
+                    buildId,
+                    CurrentGameFiles(payload, null),
+                    DirectOverwriteAuthorization.confirmed(),
+                )
+            }.exceptionOrNull()
+
+            assertTrue(error is FtpTimeoutError)
+            assertArrayEquals(old, server.files.getValue(cheatPath))
+            server.releaseBlockedStore()
+            assertTrue(server.awaitNoControlConnections())
+            assertTrue(server.awaitNoDataConnections())
+            assertArrayEquals(old, server.files.getValue(cheatPath))
+        }
+    }
+
     private fun client(
         server: FakeFtpServer,
         maxFileBytes: Int = 1024 * 1024,
         dataTimeoutMillis: Int = 1_000,
+        totalTransferTimeoutMillis: Int = 5_000,
     ) = CommonsNetSwitchFtp(
         host = "127.0.0.1",
         port = server.port,
         connectTimeoutMillis = 1_000,
         dataTimeoutMillis = dataTimeoutMillis,
+        totalTransferTimeoutMillis = totalTransferTimeoutMillis,
         maxFileBytes = maxFileBytes,
     )
 }
@@ -250,6 +396,9 @@ private class FakeFtpServer(
     private val listener = ServerSocket(0, 20, InetAddress.getLoopbackAddress())
     private val executor = Executors.newCachedThreadPool()
     private val activeControls = java.util.concurrent.atomic.AtomicInteger()
+    private val activeData = java.util.concurrent.atomic.AtomicInteger()
+    private val blockedStoreAccepted = java.util.concurrent.CountDownLatch(1)
+    private val releaseBlockedStore = java.util.concurrent.CountDownLatch(1)
     val port: Int = listener.localPort
     val files: MutableMap<String, ByteArray> = ConcurrentHashMap()
     val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -261,6 +410,10 @@ private class FakeFtpServer(
     @Volatile var wrongSizeAfterPublishPath: String? = null
     @Volatile var failStorePath: String? = null
     @Volatile var failDeletePath: String? = null
+    val permissionDeniedRetrievePaths: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+    @Volatile var denyBackupDeletes: Boolean = false
+    @Volatile var failRenameToPath: String? = null
+    @Volatile var blockStorePath: String? = null
     @Volatile private var closed = false
 
     init {
@@ -283,6 +436,22 @@ private class FakeFtpServer(
             Thread.sleep(10)
         }
         return activeControls.get() == 0
+    }
+
+    fun awaitNoDataConnections(): Boolean {
+        repeat(50) {
+            if (activeData.get() == 0) return true
+            Thread.sleep(10)
+        }
+        return activeData.get() == 0
+    }
+
+    suspend fun awaitBlockedStore() {
+        while (!blockedStoreAccepted.await(10, TimeUnit.MILLISECONDS)) kotlinx.coroutines.yield()
+    }
+
+    fun releaseBlockedStore() {
+        releaseBlockedStore.countDown()
     }
 
     private fun handleControl(socket: Socket) {
@@ -324,13 +493,18 @@ private class FakeFtpServer(
                     "RETR" -> {
                         retrievedPaths += argument
                         val bytes = files[argument]
-                        if (bytes == null) {
+                        if (permissionDeniedRetrievePaths.contains(argument)) {
+                            passive?.close()
+                            passive = null
+                            reply("550 permission denied")
+                        } else if (bytes == null) {
                             passive?.close()
                             passive = null
                             reply("550 not found")
                         } else {
                             reply("150 opening data")
                             passive!!.accept().use { data ->
+                                activeData.incrementAndGet()
                                 if (retrieveDelayMillis > 0) Thread.sleep(retrieveDelayMillis)
                                 val outgoing = if (
                                     corruptNextTargetRetrieve == argument && storedTargets.contains(argument)
@@ -341,6 +515,7 @@ private class FakeFtpServer(
                                     bytes
                                 }
                                 data.getOutputStream().write(outgoing)
+                                activeData.decrementAndGet()
                             }
                             passive.close()
                             passive = null
@@ -349,11 +524,30 @@ private class FakeFtpServer(
                     }
                     "STOR" -> {
                         reply("150 opening data")
-                        val received = passive!!.accept().use { data -> data.getInputStream().readBytes() }
-                        files[argument] = if (failStorePath == argument) {
-                            received.copyOf(received.size.coerceAtMost(3))
-                        } else {
-                            received
+                        val received: ByteArray? = passive!!.accept().use { data ->
+                            activeData.incrementAndGet()
+                            try {
+                                if (blockStorePath != null && argument.startsWith(blockStorePath!!)) {
+                                    val marker = byteArrayOf()
+                                    files[argument] = marker
+                                    blockStorePath = null
+                                    blockedStoreAccepted.countDown()
+                                    releaseBlockedStore.await(10, TimeUnit.SECONDS)
+                                    val bytes = data.getInputStream().readBytes()
+                                    bytes.takeIf { files[argument] === marker }
+                                } else {
+                                    data.getInputStream().readBytes()
+                                }
+                            } finally {
+                                activeData.decrementAndGet()
+                            }
+                        }
+                        if (received != null) {
+                            files[argument] = if (failStorePath == argument) {
+                                received.copyOf(received.size.coerceAtMost(3))
+                            } else {
+                                received
+                            }
                         }
                         storedTargets += argument
                         passive.close()
@@ -365,7 +559,16 @@ private class FakeFtpServer(
                             reply("226 transfer complete")
                         }
                     }
-                    "SIZE" -> files[argument]?.let {
+                    "MLST" -> if (permissionDeniedRetrievePaths.contains(argument)) {
+                        reply("550 permission denied")
+                    } else if (files.containsKey(argument)) {
+                        reply("250 type=file;size=${files.getValue(argument).size}; $argument")
+                    } else {
+                        reply("550 not found")
+                    }
+                    "SIZE" -> if (permissionDeniedRetrievePaths.contains(argument)) {
+                        reply("550 permission denied")
+                    } else files[argument]?.let {
                         val size = if (
                             wrongSizeAfterPublishPath == argument && publishedTargets.remove(argument)
                         ) {
@@ -389,7 +592,10 @@ private class FakeFtpServer(
                     } else {
                         reply("550 not found")
                     }
-                    "RNTO" -> if (!renameToSupported) {
+                    "RNTO" -> if (failRenameToPath == argument) {
+                        failRenameToPath = null
+                        reply("450 rename failed")
+                    } else if (!renameToSupported) {
                         reply("502 rename unsupported")
                     } else {
                         val source = renameFrom
@@ -402,8 +608,10 @@ private class FakeFtpServer(
                             reply("250 renamed")
                         }
                     }
-                    "DELE" -> if (failDeletePath == argument) {
-                        reply("450 delete failed")
+                    "DELE" -> if (denyBackupDeletes && ".nscheatmanager-backup-" in argument) {
+                        reply("550 permission denied")
+                    } else if (failDeletePath == argument) {
+                        reply("550 permission denied")
                     } else if (files.remove(argument) != null) {
                         reply("250 deleted")
                     } else {
@@ -429,6 +637,7 @@ private class FakeFtpServer(
 
     override fun close() {
         closed = true
+        releaseBlockedStore.countDown()
         listener.close()
         executor.shutdownNow()
         executor.awaitTermination(2, TimeUnit.SECONDS)

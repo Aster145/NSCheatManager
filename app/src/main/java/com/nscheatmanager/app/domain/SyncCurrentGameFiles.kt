@@ -8,6 +8,7 @@ import com.nscheatmanager.app.protocol.ftp.CommonsNetSwitchFtp
 import com.nscheatmanager.app.protocol.ftp.CurrentGameFiles
 import com.nscheatmanager.app.protocol.ftp.DirectOverwriteAuthorization
 import com.nscheatmanager.app.protocol.ftp.FtpSizeLimitError
+import com.nscheatmanager.app.protocol.ftp.FtpTransferError
 import com.nscheatmanager.app.protocol.ftp.FtpUploadResult
 import com.nscheatmanager.app.protocol.ftp.SwitchFtp
 import java.io.IOException
@@ -108,9 +109,7 @@ class SyncCurrentGameFiles(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val pendingDownloads = ConcurrentHashMap<String, PendingDownload>()
-    private val pendingUploads = ConcurrentHashMap<String, PendingUpload>()
-    private val directConfirmations = ConcurrentHashMap<String, PendingDirectConfirmation>()
-    private val directByUpload = ConcurrentHashMap<String, DirectOverwriteConfirmation>()
+    private val uploadStates = ConcurrentHashMap<String, UploadState>()
     private val operationMutex = Mutex()
 
     init {
@@ -212,7 +211,7 @@ class SyncCurrentGameFiles(
         operationMutex.withLock {
             val snapshot = mirror.withWriteTransaction { captureUploadSnapshot(titleId, buildId) }
             val token = UploadConfirmation(UUID.randomUUID().toString())
-            pendingUploads[token.id] = PendingUpload(profile, titleId, buildId, snapshot)
+            uploadStates[token.id] = UploadState.Previewed(PendingUpload(profile, titleId, buildId, snapshot))
             UploadPreview(token, snapshot.cheatBytes.size, snapshot.notesBytes?.size)
         }
     }
@@ -230,25 +229,27 @@ class SyncCurrentGameFiles(
         confirmation: UploadConfirmation,
         directOverwriteConfirmation: DirectOverwriteConfirmation?,
     ): TransferReport {
-        val pending = pendingUploads[confirmation.id] ?: throw InvalidSyncConfirmation()
-        if (directOverwriteConfirmation == null) {
-            directByUpload[confirmation.id]?.let { existing ->
-                return TransferReport.RequiresDirectOverwriteConfirmation(existing)
+        val state = uploadStates[confirmation.id] ?: throw InvalidSyncConfirmation()
+        val pending = when (state) {
+            is UploadState.Previewed -> {
+                if (directOverwriteConfirmation != null) throw InvalidSyncConfirmation()
+                state.pending
             }
-        } else {
-            val direct = directConfirmations[directOverwriteConfirmation.id] ?: throw InvalidSyncConfirmation()
-            if (direct.uploadConfirmationId != confirmation.id) throw InvalidSyncConfirmation()
+            is UploadState.AwaitingDirect -> {
+                if (directOverwriteConfirmation?.id != state.confirmation.id) throw InvalidSyncConfirmation()
+                state.pending
+            }
         }
+        if (!uploadStates.remove(confirmation.id, state)) throw InvalidSyncConfirmation()
 
         val files = mirror.withWriteTransaction {
             val current = captureUploadSnapshot(pending.titleId, pending.buildId)
             if (current != pending.snapshot) null else CurrentGameFiles(current.cheatBytes, current.notesBytes)
         } ?: run {
-            expireUpload(confirmation.id)
             return TransferReport.StaleLocalSnapshot
         }
 
-        val authorization = if (directOverwriteConfirmation == null) {
+        val authorization = if (state is UploadState.Previewed) {
             null
         } else {
             DirectOverwriteAuthorization.confirmed()
@@ -260,16 +261,15 @@ class SyncCurrentGameFiles(
             authorization,
         )) {
             FtpUploadResult.RequiresDirectOverwriteConfirmation -> {
-                val token = directByUpload.computeIfAbsent(confirmation.id) {
-                    DirectOverwriteConfirmation(UUID.randomUUID().toString()).also { created ->
-                        directConfirmations[created.id] = PendingDirectConfirmation(confirmation.id)
-                    }
+                if (state !is UploadState.Previewed) {
+                    throw FtpTransferError("FTP direct overwrite unexpectedly requested another confirmation")
                 }
+                val token = DirectOverwriteConfirmation(UUID.randomUUID().toString())
+                uploadStates[confirmation.id] = UploadState.AwaitingDirect(pending, token)
                 TransferReport.RequiresDirectOverwriteConfirmation(token)
             }
 
             is FtpUploadResult.Uploaded -> {
-                expireUpload(confirmation.id)
                 TransferReport.Uploaded(
                     cheatBytes = result.cheatBytes,
                     notesBytes = result.notesBytes,
@@ -366,11 +366,6 @@ class SyncCurrentGameFiles(
         return Files.createTempDirectory(canonicalRoot, prefix)
     }
 
-    private fun expireUpload(uploadId: String) {
-        pendingUploads.remove(uploadId)
-        directByUpload.remove(uploadId)?.let { directConfirmations.remove(it.id) }
-    }
-
     private fun deleteTree(path: Path) {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return
         Files.walk(path).use { paths ->
@@ -395,7 +390,13 @@ class SyncCurrentGameFiles(
         val snapshot: UploadSnapshot,
     )
 
-    private data class PendingDirectConfirmation(val uploadConfirmationId: String)
+    private sealed interface UploadState {
+        data class Previewed(val pending: PendingUpload) : UploadState
+        data class AwaitingDirect(
+            val pending: PendingUpload,
+            val confirmation: DirectOverwriteConfirmation,
+        ) : UploadState
+    }
 
     private data class CurrentSnapshots(val cheat: FileSnapshot, val notes: FileSnapshot)
 

@@ -7,6 +7,7 @@ import com.nscheatmanager.app.protocol.ftp.CurrentGameFiles
 import com.nscheatmanager.app.protocol.ftp.DownloadedCurrentGameFiles
 import com.nscheatmanager.app.protocol.ftp.DirectOverwriteAuthorization
 import com.nscheatmanager.app.protocol.ftp.FtpUploadResult
+import com.nscheatmanager.app.protocol.ftp.FtpReplyError
 import com.nscheatmanager.app.protocol.ftp.SwitchFtp
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
@@ -166,6 +167,75 @@ class SyncCurrentGameFilesTest {
     }
 
     @Test
+    fun ordinaryUploadFailureConsumesPreviewBeforeNetworkAndCannotBeRetried() = runTest {
+        val mirror = mirrorWith(validCheat)
+        val ftp = FakeSwitchFtp().apply {
+            uploadFailures += FtpReplyError("STOR", 451, "write failed")
+        }
+        val sync = service(mirror, ftp)
+        val preview = sync.previewUpload(profile, titleId, buildId)
+
+        val first = runCatching { sync.uploadConfirmed(preview.confirmation) }.exceptionOrNull()
+        val replay = runCatching { sync.uploadConfirmed(preview.confirmation) }.exceptionOrNull()
+
+        assertTrue(first is FtpReplyError)
+        assertTrue(replay is InvalidSyncConfirmation)
+        assertEquals(1, ftp.uploadCalls)
+    }
+
+    @Test
+    fun directUploadFailureConsumesBothConfirmationsAndCannotBeRetried() = runTest {
+        val mirror = mirrorWith(validCheat)
+        val ftp = FakeSwitchFtp(
+            uploadResults = ArrayDeque(listOf(FtpUploadResult.RequiresDirectOverwriteConfirmation)),
+        )
+        val sync = service(mirror, ftp)
+        val preview = sync.previewUpload(profile, titleId, buildId)
+        val direct = (sync.uploadConfirmed(preview.confirmation)
+            as TransferReport.RequiresDirectOverwriteConfirmation).confirmation
+        ftp.uploadFailures += FtpReplyError("STOR", 451, "direct failed")
+
+        val first = runCatching { sync.uploadConfirmed(preview.confirmation, direct) }.exceptionOrNull()
+        val replay = runCatching { sync.uploadConfirmed(preview.confirmation, direct) }.exceptionOrNull()
+
+        assertTrue(first is FtpReplyError)
+        assertTrue(replay is InvalidSyncConfirmation)
+        assertEquals(2, ftp.uploadCalls)
+    }
+
+    @Test
+    fun concurrentQueuedTapCannotReuseADirectConfirmationAfterFailure() = runTest {
+        val mirror = mirrorWith(validCheat)
+        val ftp = FakeSwitchFtp(
+            uploadResults = ArrayDeque(listOf(FtpUploadResult.RequiresDirectOverwriteConfirmation)),
+        )
+        val sync = service(mirror, ftp)
+        val preview = sync.previewUpload(profile, titleId, buildId)
+        val direct = (sync.uploadConfirmed(preview.confirmation)
+            as TransferReport.RequiresDirectOverwriteConfirmation).confirmation
+        ftp.uploadFailures += FtpReplyError("STOR", 451, "direct failed")
+        ftp.uploadStarted = CompletableDeferred()
+        ftp.secondUploadStarted = CompletableDeferred()
+        ftp.releaseUpload = CompletableDeferred()
+        ftp.gatedCallNumber = 2
+        ftp.queuedCallNumber = 3
+
+        val first = async { runCatching { sync.uploadConfirmed(preview.confirmation, direct) } }
+        ftp.uploadStarted!!.await()
+        val queued = async { runCatching { sync.uploadConfirmed(preview.confirmation, direct) } }
+        val queuedReachedProtocol = withTimeoutOrNull(200) {
+            ftp.secondUploadStarted!!.await()
+            true
+        } ?: false
+        ftp.releaseUpload!!.complete(Unit)
+
+        assertFalse(queuedReachedProtocol)
+        assertTrue(first.await().exceptionOrNull() is FtpReplyError)
+        assertTrue(queued.await().exceptionOrNull() is InvalidSyncConfirmation)
+        assertEquals(2, ftp.uploadCalls)
+    }
+
+    @Test
     fun replacingRemoteNotesRequiresOnlyTheCurrentBuildScopedLocalFile() = runTest {
         val notes = "current build notes".toByteArray()
         val mirror = mirrorWith(validCheat, notes)
@@ -183,9 +253,10 @@ class SyncCurrentGameFilesTest {
     }
 
     @Test
-    fun anUploadConfirmationCannotPublishTwiceWhenTappedConcurrently() = runTest {
+    fun concurrentQueuedTapCannotReuseAnOrdinaryUploadAfterFailure() = runTest {
         val mirror = mirrorWith(validCheat)
         val ftp = FakeSwitchFtp().apply {
+            uploadFailures += FtpReplyError("STOR", 451, "write failed")
             uploadStarted = CompletableDeferred()
             secondUploadStarted = CompletableDeferred()
             releaseUpload = CompletableDeferred()
@@ -193,7 +264,7 @@ class SyncCurrentGameFilesTest {
         val sync = service(mirror, ftp)
         val preview = sync.previewUpload(profile, titleId, buildId)
 
-        val first = async { sync.uploadConfirmed(preview.confirmation) }
+        val first = async { runCatching { sync.uploadConfirmed(preview.confirmation) } }
         ftp.uploadStarted!!.await()
         val second = async { runCatching { sync.uploadConfirmed(preview.confirmation) } }
         val secondReachedProtocol = withTimeoutOrNull(200) {
@@ -203,7 +274,7 @@ class SyncCurrentGameFilesTest {
         ftp.releaseUpload!!.complete(Unit)
 
         assertFalse(secondReachedProtocol)
-        assertTrue(first.await() is TransferReport.Uploaded)
+        assertTrue(first.await().exceptionOrNull() is FtpReplyError)
         assertTrue(second.await().exceptionOrNull() is InvalidSyncConfirmation)
         assertEquals(1, ftp.uploadCalls)
     }
@@ -234,9 +305,12 @@ private class FakeSwitchFtp(
     var lastTitleId: TitleId? = null
     var lastBuildId: BuildId? = null
     val directOverwriteAuthorizations = mutableListOf<Boolean>()
+    val uploadFailures = ArrayDeque<Throwable>()
     var uploadStarted: CompletableDeferred<Unit>? = null
     var secondUploadStarted: CompletableDeferred<Unit>? = null
     var releaseUpload: CompletableDeferred<Unit>? = null
+    var gatedCallNumber: Int = 1
+    var queuedCallNumber: Int = 2
 
     override suspend fun downloadCurrent(titleId: TitleId, buildId: BuildId): DownloadedCurrentGameFiles {
         downloadCalls++
@@ -259,9 +333,10 @@ private class FakeSwitchFtp(
         lastBuildId = buildId
         lastUpload = files
         directOverwriteAuthorizations += directOverwriteAuthorization != null
-        uploadStarted?.complete(Unit)
-        if (callNumber == 2) secondUploadStarted?.complete(Unit)
-        releaseUpload?.await()
+        if (callNumber == gatedCallNumber) uploadStarted?.complete(Unit)
+        if (callNumber == queuedCallNumber) secondUploadStarted?.complete(Unit)
+        if (callNumber >= gatedCallNumber) releaseUpload?.await()
+        if (uploadFailures.isNotEmpty()) throw uploadFailures.removeFirst()
         return if (uploadResults.isEmpty()) {
             FtpUploadResult.Uploaded(files.cheat.size, files.notes?.size)
         } else {

@@ -7,14 +7,25 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.net.SocketTimeoutException
+import java.net.Socket
 import java.time.Duration
 import java.util.UUID
+import java.util.Timer
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.schedule
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
+import org.apache.commons.net.ftp.FTPCmd
 
 /** Commons Net adapter compatible with the small anonymous passive FTP servers used on Switch. */
 class CommonsNetSwitchFtp(
@@ -22,26 +33,25 @@ class CommonsNetSwitchFtp(
     private val port: Int = DEFAULT_PORT,
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val dataTimeoutMillis: Int = DEFAULT_DATA_TIMEOUT_MILLIS,
+    private val totalTransferTimeoutMillis: Int = DEFAULT_TOTAL_TRANSFER_TIMEOUT_MILLIS,
     private val maxFileBytes: Int = DEFAULT_MAX_FILE_BYTES,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    private val clientFactory: () -> FTPClient = ::FTPClient,
 ) : SwitchFtp {
     init {
         require(host.isNotBlank()) { "FTP host must not be blank" }
         require(port in 1..65535) { "FTP port must be in 1..65535" }
         require(connectTimeoutMillis > 0) { "FTP connect timeout must be positive" }
         require(dataTimeoutMillis > 0) { "FTP data timeout must be positive" }
+        require(totalTransferTimeoutMillis > 0) { "FTP total timeout must be positive" }
         require(maxFileBytes > 0) { "FTP file limit must be positive" }
     }
 
     override suspend fun downloadCurrent(titleId: TitleId, buildId: BuildId): DownloadedCurrentGameFiles =
-        withContext(dispatcher) {
-            withClient { client ->
-                DownloadedCurrentGameFiles(
-                    cheat = retrieveOptional(client, RemotePaths.cheat(titleId, buildId)),
-                    notes = retrieveOptional(client, RemotePaths.notes(titleId, buildId)),
-                )
-            }
+        withClient { client ->
+            DownloadedCurrentGameFiles(
+                cheat = retrieveOptional(client, RemotePaths.cheat(titleId, buildId)),
+                notes = retrieveOptional(client, RemotePaths.notes(titleId, buildId)),
+            )
         }
 
     override suspend fun uploadCurrent(
@@ -49,12 +59,12 @@ class CommonsNetSwitchFtp(
         buildId: BuildId,
         files: CurrentGameFiles,
         directOverwriteAuthorization: DirectOverwriteAuthorization?,
-    ): FtpUploadResult = withContext(dispatcher) {
+    ): FtpUploadResult {
         require(files.cheat.size <= maxFileBytes) { "Cheat content exceeds the FTP file limit" }
         require(files.notes == null || files.notes.size <= maxFileBytes) {
             "Notes content exceeds the FTP file limit"
         }
-        withClient { client ->
+        return withClient { client ->
             ensureRemoteDirectories(client, titleId, buildId, includeNotes = files.notes != null)
             val entries = buildList {
                 add(UploadEntry(RemotePaths.cheat(titleId, buildId), files.cheat))
@@ -98,12 +108,7 @@ class CommonsNetSwitchFtp(
             rollbackSafe(client, entries)
             return FtpUploadResult.RequiresDirectOverwriteConfirmation
         } catch (error: Throwable) {
-            try {
-                rollbackSafe(client, entries)
-            } catch (rollback: Throwable) {
-                error.addSuppressed(rollback)
-                throw FtpRollbackError("FTP staged upload failed and rollback was incomplete", error)
-            }
+            recoverSafeUpload(client, entries, error)
             throw error
         } finally {
             cleanupArtifacts(client, entries)
@@ -121,21 +126,64 @@ class CommonsNetSwitchFtp(
             }
             return uploaded(entries, retainedRecovery = false)
         } catch (error: Throwable) {
-            try {
-                entries.asReversed().filter { it.published }.forEach { entry ->
-                    val old = entry.oldBytes
-                    if (old == null) {
-                        deleteForRollback(client, entry.target)
-                    } else {
-                        store(client, entry.target, old)
-                        verifyRemote(client, entry.target, old)
-                    }
-                }
-            } catch (rollback: Throwable) {
-                error.addSuppressed(rollback)
-                throw FtpRollbackError("FTP direct overwrite failed and recovery was incomplete", error)
-            }
+            recoverDirectUpload(client, entries, error)
             throw error
+        }
+    }
+
+    private fun recoverSafeUpload(client: FTPClient, entries: List<UploadEntry>, original: Throwable) {
+        val firstFailure = runCatching {
+            rollbackSafe(client, entries)
+            cleanupArtifactsStrict(client, entries)
+        }.exceptionOrNull()
+        if (firstFailure == null && (client as? AbortableFtpClient)?.wasAborted() != true) return
+        firstFailure?.let(original::addSuppressed)
+        val freshFailure = runCatching {
+            withFreshBoundedClient { fresh ->
+                rollbackSafe(fresh, entries)
+                cleanupArtifactsStrict(fresh, entries)
+            }
+        }.exceptionOrNull()
+        if (freshFailure != null) {
+            original.addSuppressed(freshFailure)
+            throw FtpRollbackError("FTP staged upload failed and rollback was incomplete", original)
+        }
+    }
+
+    private fun recoverDirectUpload(client: FTPClient, entries: List<UploadEntry>, original: Throwable) {
+        val firstFailure = runCatching { rollbackDirect(client, entries) }.exceptionOrNull()
+        if (firstFailure == null && (client as? AbortableFtpClient)?.wasAborted() != true) return
+        firstFailure?.let(original::addSuppressed)
+        val freshFailure = runCatching { withFreshBoundedClient { rollbackDirect(it, entries) } }.exceptionOrNull()
+        if (freshFailure != null) {
+            original.addSuppressed(freshFailure)
+            throw FtpRollbackError("FTP direct overwrite failed and recovery was incomplete", original)
+        }
+    }
+
+    private fun rollbackDirect(client: FTPClient, entries: List<UploadEntry>) {
+        entries.asReversed().filter { it.published }.forEach { entry ->
+            val old = entry.oldBytes
+            if (old == null) {
+                deleteForRollback(client, entry.target)
+            } else {
+                store(client, entry.target, old)
+                verifyRemote(client, entry.target, old)
+            }
+            entry.published = false
+        }
+    }
+
+    private fun withFreshBoundedClient(operation: (FTPClient) -> Unit) {
+        val fresh = AbortableFtpClient()
+        val watchdog = Timer("nscheatmanager-ftp-recovery", true)
+        watchdog.schedule(minOf(totalTransferTimeoutMillis, MAX_RECOVERY_TIMEOUT_MILLIS).toLong()) {
+            fresh.abortNow()
+        }
+        try {
+            withClientBlocking(fresh, operation)
+        } finally {
+            watchdog.cancel()
         }
     }
 
@@ -163,6 +211,13 @@ class CommonsNetSwitchFtp(
             entry.backup?.let { backup ->
                 if (!entry.backedUp) runCatching { deleteIfPresent(client, backup) }
             }
+        }
+    }
+
+    private fun cleanupArtifactsStrict(client: FTPClient, entries: List<UploadEntry>) {
+        entries.forEach { entry ->
+            entry.temporary?.let { deleteForRollback(client, it) }
+            entry.backup?.let { backup -> if (!entry.backedUp) deleteForRollback(client, backup) }
         }
     }
 
@@ -200,8 +255,14 @@ class CommonsNetSwitchFtp(
         val output = LimitedOutputStream(maxFileBytes)
         val retrieved = client.retrieveFile(path, output)
         if (!retrieved) {
-            if (client.replyCode == 550) return null
-            throw replyError(client, "RETR")
+            val retrievalError = replyError(client, "RETR")
+            if (client.replyCode != 550) throw retrievalError
+            return when (probeExistence(client, path)) {
+                RemoteExistence.Absent -> null
+                RemoteExistence.Present,
+                RemoteExistence.Ambiguous,
+                -> throw retrievalError
+            }
         }
         return output.toByteArray()
     }
@@ -218,12 +279,41 @@ class CommonsNetSwitchFtp(
 
     private fun deleteIfPresent(client: FTPClient, path: String): Boolean {
         if (client.deleteFile(path)) return true
-        if (client.replyCode == 550) return true
-        return false
+        if (client.replyCode != 550) return false
+        return probeExistence(client, path) == RemoteExistence.Absent
     }
 
     private fun deleteForRollback(client: FTPClient, path: String) {
-        if (!deleteIfPresent(client, path)) throw replyError(client, "rollback DELE")
+        if (!client.deleteFile(path)) {
+            val deletionError = replyError(client, "rollback DELE")
+            if (client.replyCode != 550 || probeExistence(client, path) != RemoteExistence.Absent) {
+                throw deletionError
+            }
+        }
+    }
+
+    private fun probeExistence(client: FTPClient, path: String): RemoteExistence {
+        val mlstCode = client.sendCommand("MLST", path)
+        classifyExistenceReply(mlstCode, client.replyString)?.let { return it }
+
+        val sizeCode = client.sendCommand("SIZE", path)
+        classifyExistenceReply(sizeCode, client.replyString)?.let { return it }
+
+        return RemoteExistence.Ambiguous
+    }
+
+    private fun classifyExistenceReply(code: Int, reply: String?): RemoteExistence? = when {
+        FTPReply.isPositiveCompletion(code) -> RemoteExistence.Present
+        code == 550 && replyIndicatesMissing(reply) -> RemoteExistence.Absent
+        code == 550 -> null
+        code in PROBE_UNSUPPORTED_REPLIES -> null
+        else -> null
+    }
+
+    private fun replyIndicatesMissing(reply: String?): Boolean {
+        val normalized = reply.orEmpty().lowercase()
+        if (PERMISSION_MARKERS.any(normalized::contains)) return false
+        return MISSING_MARKERS.any(normalized::contains)
     }
 
     private fun ensureRemoteDirectories(
@@ -246,14 +336,61 @@ class CommonsNetSwitchFtp(
         }
     }
 
-    private fun <T> withClient(operation: (FTPClient) -> T): T {
-        val client = clientFactory()
+    private suspend fun <T> withClient(operation: (FTPClient) -> T): T {
+        val client = AbortableFtpClient()
+        val timedOut = AtomicBoolean(false)
+        val watchdog = Timer("nscheatmanager-ftp-deadline", true)
+        watchdog.schedule(totalTransferTimeoutMillis.toLong()) {
+            timedOut.set(true)
+            client.abortNow()
+        }
         try {
+            val result = runCatching {
+                withContext(dispatcher) {
+                    runCancellableBlocking(client) { withClientBlocking(client, operation) }
+                }
+            }
+            if (timedOut.get()) {
+                val timeout = FtpTimeoutError("FTP total transfer deadline exceeded")
+                result.exceptionOrNull()?.let(timeout::addSuppressed)
+                throw timeout
+            }
+            return result.getOrThrow()
+        } finally {
+            watchdog.cancel()
+        }
+    }
+
+    private suspend fun <T> runCancellableBlocking(
+        client: AbortableFtpClient,
+        operation: () -> T,
+    ): T = suspendCancellableCoroutine { continuation ->
+        val workerReference = AtomicReference<Job?>()
+        continuation.invokeOnCancellation {
+            client.abortNow()
+            workerReference.get()?.cancel()
+        }
+        val worker = CoroutineScope(dispatcher).launch(start = CoroutineStart.LAZY) {
+            continuation.resumeWith(runCatching(operation))
+        }
+        workerReference.set(worker)
+        if (continuation.isCancelled) {
+            client.abortNow()
+            worker.cancel()
+        } else {
+            worker.start()
+        }
+    }
+
+    private fun <T> withClientBlocking(client: AbortableFtpClient, operation: (FTPClient) -> T): T {
+        try {
+            client.requireNotAborted()
             client.connectTimeout = connectTimeoutMillis
             client.defaultTimeout = connectTimeoutMillis
             client.dataTimeout = Duration.ofMillis(dataTimeoutMillis.toLong())
             client.setUseEPSVwithIPv4(false)
             client.connect(host, port)
+            client.requireNotAborted()
             client.soTimeout = dataTimeoutMillis
             if (!FTPReply.isPositiveCompletion(client.replyCode)) throw replyError(client, "connect")
             if (!client.login(ANONYMOUS_USER, ANONYMOUS_PASSWORD)) throw replyError(client, "login")
@@ -272,7 +409,7 @@ class CommonsNetSwitchFtp(
             throw FtpConnectionError("FTP operation failed", error)
         } finally {
             if (client.isConnected) {
-                runCatching { client.logout() }
+                if (!client.wasAborted()) runCatching { client.logout() }
                 runCatching { client.disconnect() }
             }
         }
@@ -311,6 +448,55 @@ class CommonsNetSwitchFtp(
 
     private class RenameUnsupported : IOException()
 
+    private enum class RemoteExistence { Present, Absent, Ambiguous }
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    private class AbortableFtpClient : FTPClient() {
+        private val activeDataSocket = AtomicReference<Socket?>()
+        private val aborted = AtomicBoolean(false)
+
+        override fun _openDataConnection_(command: String, arg: String): Socket? =
+            track(super._openDataConnection_(command, arg))
+
+        override fun _openDataConnection_(command: FTPCmd, arg: String): Socket? =
+            track(super._openDataConnection_(command, arg))
+
+        @Suppress("DEPRECATION")
+        override fun _openDataConnection_(command: Int, arg: String): Socket? =
+            track(super._openDataConnection_(command, arg))
+
+        private fun track(socket: Socket?): Socket? = socket?.also { candidate ->
+            if (aborted.get()) {
+                runCatching { candidate.close() }
+            } else {
+                activeDataSocket.set(candidate)
+                if (aborted.get() && activeDataSocket.compareAndSet(candidate, null)) {
+                    runCatching { candidate.close() }
+                }
+            }
+        }
+
+        fun abortNow() {
+            if (!aborted.compareAndSet(false, true)) return
+            runCatching { activeDataSocket.getAndSet(null)?.close() }
+            runCatching { disconnect() }
+        }
+
+        fun wasAborted(): Boolean = aborted.get()
+
+        fun requireNotAborted() {
+            if (aborted.get()) throw IOException("FTP operation was cancelled")
+        }
+
+        override fun _connectAction_() {
+            super._connectAction_()
+            if (aborted.get()) {
+                runCatching { disconnect() }
+                throw IOException("FTP operation was cancelled during connection")
+            }
+        }
+    }
+
     private class LimitedOutputStream(private val limit: Int) : OutputStream() {
         private val delegate = ByteArrayOutputStream(minOf(limit, 8192))
         private var count = 0
@@ -347,10 +533,15 @@ class CommonsNetSwitchFtp(
         const val DEFAULT_PORT = 21
         const val DEFAULT_CONNECT_TIMEOUT_MILLIS = 5_000
         const val DEFAULT_DATA_TIMEOUT_MILLIS = 10_000
+        const val DEFAULT_TOTAL_TRANSFER_TIMEOUT_MILLIS = 30_000
         const val DEFAULT_MAX_FILE_BYTES = 1024 * 1024
+        private const val MAX_RECOVERY_TIMEOUT_MILLIS = 5_000
         private const val ANONYMOUS_USER = "anonymous"
         private const val ANONYMOUS_PASSWORD = "anonymous@"
         private val RENAME_UNSUPPORTED_REPLIES = setOf(500, 501, 502, 504)
         private val SIZE_UNSUPPORTED_REPLIES = setOf(500, 501, 502, 504)
+        private val PROBE_UNSUPPORTED_REPLIES = setOf(500, 501, 502, 504)
+        private val MISSING_MARKERS = setOf("not found", "no such file", "does not exist", "missing")
+        private val PERMISSION_MARKERS = setOf("permission", "denied", "not allowed", "access")
     }
 }
