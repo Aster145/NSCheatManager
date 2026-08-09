@@ -271,6 +271,253 @@ class CheatExecutorTest {
     }
 
     @Test
+    fun staticallyKnownWriteSpanCrossingAddressSpaceRejectsBeforeEarlierWrite() = runTest {
+        val memory = RecordingSysBotbase()
+        val group = parseGroup(
+            """
+            [span]
+            04400000 00001000 DEADBEEF
+            40000000 FFFFFFFF FFFFFFFE
+            64000000 00000000 00000001
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Rejected, report.status)
+        assertEquals(4, report.failureLine)
+        assertEquals(0, report.completedWrites)
+        assertTrue(memory.networkCalls.isEmpty())
+    }
+
+    @Test
+    fun dynamicPointerWriteSpanCrossingAddressSpaceStopsBeforeWrite() = runTest {
+        val memory = RecordingSysBotbase(
+            reads = mutableMapOf(0x1000_0010uL to littleEndian(ULong.MAX_VALUE - 1u)),
+        )
+        val group = parseGroup(
+            """
+            [dynamic write span]
+            58000000 00000010
+            64000000 00000000 00000001
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Failed, report.status)
+        assertEquals(3, report.failureLine)
+        assertEquals(0, report.completedWrites)
+        assertTrue(memory.writes.isEmpty())
+    }
+
+    @Test
+    fun dynamicPointerReadSpanCrossingAddressSpaceStopsBeforeSecondRead() = runTest {
+        val pointer = ULong.MAX_VALUE - 3u
+        val memory = RecordingSysBotbase(
+            reads = mutableMapOf(
+                0x1000_0010uL to littleEndian(pointer),
+                pointer to littleEndian(1u),
+            ),
+        )
+        val group = parseGroup(
+            """
+            [dynamic read span]
+            58000000 00000010
+            58001000 00000000
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Failed, report.status)
+        assertEquals(3, report.failureLine)
+        assertEquals(1, memory.readCalls.size)
+    }
+
+    @Test
+    fun knownInvalidShiftCountRejectsEvenWhenLeftOperandComesFromPointerRead() = runTest {
+        val memory = RecordingSysBotbase(
+            reads = mutableMapOf(0x1000_0010uL to littleEndian(1u)),
+        )
+        val group = parseGroup(
+            """
+            [known shift]
+            58000000 00000010
+            40010000 00000000 00000040
+            98320010
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Rejected, report.status)
+        assertEquals(4, report.failureLine)
+        assertTrue(memory.networkCalls.isEmpty())
+    }
+
+    @Test
+    fun knownTooWideAddOperandRejectsEvenWhenOtherOperandComesFromPointerRead() = runTest {
+        val memory = RecordingSysBotbase(
+            reads = mutableMapOf(0x1000_0010uL to littleEndian(1u)),
+        )
+        val group = parseGroup(
+            """
+            [known width]
+            40000000 00000000 00000100
+            58010000 00000010
+            91000010
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Rejected, report.status)
+        assertEquals(4, report.failureLine)
+        assertTrue(memory.networkCalls.isEmpty())
+    }
+
+    @Test
+    fun codeNineMoveNarrowsResultsAtOneTwoAndFourBytes() = runTest {
+        val cases = listOf(
+            Triple(1, "00000000 000001FF", byteArrayOf(0xFF.toByte())),
+            Triple(2, "00000000 0001FFFF", byteArrayOf(0xFF.toByte(), 0xFF.toByte())),
+            Triple(4, "00000001 FFFFFFFF", byteArrayOf(-1, -1, -1, -1)),
+        )
+
+        cases.forEach { (width, sourceWords, expected) ->
+            val memory = RecordingSysBotbase()
+            val group = parseGroup(
+                """
+                [move $width]
+                40010000 $sourceWords
+                40030000 00000000 00001000
+                9${width}901020
+                A${width}030000
+                """.trimIndent(),
+            )
+
+            val report = CheatExecutor().execute(group, identity, memory)
+
+            assertEquals("width $width", ExecutionStatus.Complete, report.status)
+            assertArrayEquals("width $width", expected, memory.writes.single().bytes)
+        }
+    }
+
+    @Test
+    fun immediateMoveIgnoresNonzeroDiscardedImmediateHighBits() = runTest {
+        val memory = RecordingSysBotbase()
+        val group = parseGroup(
+            """
+            [immediate move]
+            40010000 00000000 000001FF
+            40030000 00000000 00001000
+            91901100 DEADBEEF
+            A1030000
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Complete, report.status)
+        assertArrayEquals(byteArrayOf(0xFF.toByte()), memory.writes.single().bytes)
+    }
+
+    @Test
+    fun narrowImmediateArithmeticDecodesTheDocumentedLowWidthVmInteger() = runTest {
+        val memory = RecordingSysBotbase()
+        val group = parseGroup(
+            """
+            [immediate vm integer]
+            40010000 00000000 00000001
+            40030000 00000000 00001000
+            91001100 DEADBEEF
+            A1030000
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Complete, report.status)
+        assertArrayEquals(byteArrayOf(0xF0.toByte()), memory.writes.single().bytes)
+    }
+
+    @Test
+    fun narrowBitwiseAndRightShiftComputeThenNarrow() = runTest {
+        val cases = listOf(
+            Triple(0x4, 0x001uL, 0xFF),
+            Triple(0x5, 0x10FuL, 0x0E),
+            Triple(0x6, 0x10FuL, 0xFF),
+            Triple(0x8, 0x10FuL, 0xF1),
+        )
+
+        cases.forEach { (code, right, expected) ->
+            val memory = RecordingSysBotbase()
+            val group = parseGroup(
+                """
+                [narrow $code]
+                40010000 00000000 000001FE
+                40020000 00000000 ${right.toString(16).uppercase().padStart(8, '0')}
+                40030000 00000000 00001000
+                91${code.toString(16).uppercase()}01020
+                A1030000
+                """.trimIndent(),
+            )
+
+            val report = CheatExecutor().execute(group, identity, memory)
+
+            assertEquals("operation $code", ExecutionStatus.Complete, report.status)
+            assertArrayEquals("operation $code", byteArrayOf(expected.toByte()), memory.writes.single().bytes)
+        }
+    }
+
+    @Test
+    fun codeAIncrementAdvancesAddressRegisterByWriteWidth() = runTest {
+        val memory = RecordingSysBotbase()
+        val group = parseGroup(
+            """
+            [increment]
+            40000000 01020304 05060708
+            40010000 00000000 00001000
+            A8011000
+            A8010000
+            """.trimIndent(),
+        )
+
+        val report = CheatExecutor().execute(group, identity, memory)
+
+        assertEquals(ExecutionStatus.Complete, report.status)
+        assertEquals(listOf(0x1000uL, 0x1008uL), memory.writeAddresses())
+    }
+
+    @Test
+    fun legacyArithmeticAndStaticWritesExecuteAtEveryApprovedWidth() = runTest {
+        listOf(1, 2, 4, 8).forEach { width ->
+            val memory = RecordingSysBotbase()
+            val staticWrite = if (width == 8) {
+                "08000000 00000020 01020304 05060708"
+            } else {
+                "0${width}000000 00000020 11223344"
+            }
+            val group = parseGroup(
+                """
+                [width $width]
+                $staticWrite
+                40000000 00000000 00000010
+                7${width}000000 00000001
+                6${width}000000 01020304 05060708
+                """.trimIndent(),
+            )
+
+            val report = CheatExecutor().execute(group, identity, memory)
+
+            assertEquals("width $width", ExecutionStatus.Complete, report.status)
+            assertEquals(listOf(0x1000_0020uL, 0x11uL), memory.writeAddresses())
+            assertEquals(width, memory.writes.last().bytes.size)
+        }
+    }
+
+    @Test
     fun nullPointerStopsBeforeAnyWriteAndReportsItsSourceLine() = runTest {
         val memory = RecordingSysBotbase(
             reads = mutableMapOf(0x1000_0010uL to littleEndian(0uL)),

@@ -9,11 +9,7 @@ class CheatInterpreter {
     internal fun decode(instruction: EncodedInstruction): DecodeResult {
         val first = instruction.words.firstOrNull()
             ?: return invalidForm(instruction, "Instruction has no words")
-        val opcode = if ((first shr 28).toInt() >= 0xC) {
-            (first shr 24).toInt()
-        } else {
-            (first shr 28).toInt()
-        }
+        val opcode = decodeOpcode(first)
         return when (opcode) {
             0x0 -> decodeStaticWrite(instruction, first)
             0x4 -> decodeLoadConstant(instruction, first)
@@ -184,8 +180,7 @@ class CheatInterpreter {
                 if (instruction.words.size != expectedWords || nibble(first, 6) != 0 || nibble(first, 7) != 0) {
                     return invalidForm(instruction, "Invalid immediate arithmetic form")
                 }
-                val immediate = value(instruction.words, 1, width)
-                if (!fitsWidth(immediate, width)) return invalidForm(instruction, "Immediate does not fit arithmetic width")
+                val immediate = decodeVmInteger(instruction.words, 1, width)
                 DecodeResult.Valid(
                     CheatOperation.Arithmetic(
                         width, kind, destination, left,
@@ -290,6 +285,25 @@ class CheatInterpreter {
 
     private fun value(words: List<UInt>, start: Int, width: Int): ULong =
         if (width == 8) combine64(words[start], words[start + 1]) else words[start].toULong()
+
+    private fun decodeVmInteger(words: List<UInt>, start: Int, width: Int): ULong = when (width) {
+        1 -> (words[start] and 0xFFu).toULong()
+        2 -> (words[start] and 0xFFFFu).toULong()
+        4 -> words[start].toULong()
+        8 -> combine64(words[start], words[start + 1])
+        else -> error("Width was validated before decoding the VM integer")
+    }
+
+    private fun decodeOpcode(first: UInt): Int {
+        var opcode = (first shr 28).toInt()
+        if (opcode >= 0xC) {
+            opcode = (opcode shl 4) or nibble(first, 1)
+        }
+        if (opcode >= 0xF0) {
+            opcode = (opcode shl 4) or nibble(first, 2)
+        }
+        return opcode
+    }
 
     private fun combine64(high: UInt, low: UInt): ULong =
         (high.toULong() shl 32) or low.toULong()

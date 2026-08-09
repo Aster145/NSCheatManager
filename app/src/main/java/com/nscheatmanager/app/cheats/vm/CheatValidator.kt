@@ -69,18 +69,23 @@ class CheatValidator(
         when (operation) {
             is CheatOperation.LoadConstant -> registers[operation.register] = operation.value
             is CheatOperation.Read -> {
-                validateKnownAddress(operation.address, registers, identity)
+                validateKnownAddress(operation.address, operation.widthBytes, registers, identity)
                 registers[operation.destinationRegister] = null
             }
             is CheatOperation.Write -> {
-                validateKnownAddress(operation.address, registers, identity)
+                validateKnownAddress(operation.address, operation.widthBytes, registers, identity)
                 operation.incrementRegister?.let { register ->
                     registers[register] = registers[register]?.let { checkedAdd(it, operation.widthBytes.toULong()) }
                 }
             }
             is CheatOperation.Arithmetic -> {
                 val left = registers[operation.leftRegister]
-                val right = operation.immediate ?: operation.rightRegister?.let(registers::get)
+                val right = if (operation.kind == ArithmeticKind.Move) {
+                    null
+                } else {
+                    operation.immediate ?: operation.rightRegister?.let(registers::get)
+                }
+                validateKnownArithmeticOperands(operation, left, right)
                 registers[operation.destinationRegister] =
                     if (left != null && (right != null || operation.kind == ArithmeticKind.Move)) {
                         evaluateArithmetic(operation, left, right ?: 0u)
@@ -93,6 +98,7 @@ class CheatValidator(
 
     private fun validateKnownAddress(
         address: AddressExpression,
+        widthBytes: Int,
         registers: Array<ULong?>,
         identity: GameIdentity?,
     ) {
@@ -123,8 +129,42 @@ class CheatValidator(
                 addKnown(address.immediateOffset)
             }
         }
-        if (allPartsKnown && result == 0uL) {
-            throw ArithmeticException("Null memory address")
+        checkedMemorySpan(result, widthBytes)
+        if (allPartsKnown) {
+            if (result == 0uL) throw ArithmeticException("Null memory address")
+        }
+    }
+
+    private fun validateKnownArithmeticOperands(
+        operation: CheatOperation.Arithmetic,
+        left: ULong?,
+        right: ULong?,
+    ) {
+        val maximum = widthMaximum(operation.widthBytes)
+        val bitCount = operation.widthBytes * 8
+        when (operation.kind) {
+            ArithmeticKind.Add,
+            ArithmeticKind.Subtract,
+            -> {
+                if (left != null && left > maximum) throw ArithmeticException("Left operand is too wide")
+                if (right != null && right > maximum) throw ArithmeticException("Right operand is too wide")
+            }
+            ArithmeticKind.ShiftLeft -> {
+                if (left != null && left > maximum) throw ArithmeticException("Left operand is too wide")
+                if (right != null && right >= bitCount.toULong()) {
+                    throw ArithmeticException("Shift count is outside the operation width")
+                }
+            }
+            ArithmeticKind.ShiftRight -> {
+                if (right != null && right >= bitCount.toULong()) {
+                    throw ArithmeticException("Shift count is outside the operation width")
+                }
+            }
+            ArithmeticKind.And,
+            ArithmeticKind.Or,
+            ArithmeticKind.Xor,
+            ArithmeticKind.Move,
+            -> Unit
         }
     }
 
@@ -139,21 +179,20 @@ class CheatValidator(
             right: ULong,
         ): ULong {
             val maximum = widthMaximum(operation.widthBytes)
-            if (left > maximum || (operation.kind != ArithmeticKind.Move && right > maximum)) {
-                throw ArithmeticException("Operand does not fit arithmetic width")
-            }
             return when (operation.kind) {
                 ArithmeticKind.Add -> {
+                    if (left > maximum || right > maximum) throw ArithmeticException("Operand is too wide")
                     if (left > maximum - right) throw ArithmeticException("Addition overflow")
                     left + right
                 }
                 ArithmeticKind.Subtract -> {
+                    if (left > maximum || right > maximum) throw ArithmeticException("Operand is too wide")
                     if (left < right) throw ArithmeticException("Subtraction overflow")
                     left - right
                 }
                 ArithmeticKind.ShiftLeft -> {
                     val bits = operation.widthBytes * 8
-                    if (right >= bits.toULong() || left > (maximum shr right.toInt())) {
+                    if (left > maximum || right >= bits.toULong() || left > (maximum shr right.toInt())) {
                         throw ArithmeticException("Left shift overflow")
                     }
                     left shl right.toInt()
@@ -161,16 +200,16 @@ class CheatValidator(
                 ArithmeticKind.ShiftRight -> {
                     val bits = operation.widthBytes * 8
                     if (right >= bits.toULong()) throw ArithmeticException("Invalid right shift")
-                    left shr right.toInt()
+                    (left shr right.toInt()) and maximum
                 }
-                ArithmeticKind.And -> left and right
-                ArithmeticKind.Or -> left or right
-                ArithmeticKind.Xor -> left xor right
-                ArithmeticKind.Move -> left
+                ArithmeticKind.And -> (left and right) and maximum
+                ArithmeticKind.Or -> (left or right) and maximum
+                ArithmeticKind.Xor -> (left xor right) and maximum
+                ArithmeticKind.Move -> left and maximum
             }
         }
 
-        private fun widthMaximum(widthBytes: Int): ULong =
+        internal fun widthMaximum(widthBytes: Int): ULong =
             if (widthBytes == 8) ULong.MAX_VALUE else (1uL shl (widthBytes * 8)) - 1u
     }
 }

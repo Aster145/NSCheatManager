@@ -3,6 +3,11 @@ package com.nscheatmanager.app.cheats.vm
 import com.nscheatmanager.app.core.model.checkedAdd
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
 
+internal fun checkedMemorySpan(startAddress: ULong, widthBytes: Int): ULong {
+    require(widthBytes > 0) { "Memory access width must be positive" }
+    return checkedAdd(startAddress, (widthBytes - 1).toULong())
+}
+
 enum class CheatMemoryRegion {
     Main,
     Heap,

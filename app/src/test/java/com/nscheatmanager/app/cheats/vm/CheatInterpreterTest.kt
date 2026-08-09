@@ -46,19 +46,53 @@ class CheatInterpreterTest {
     @Test
     fun acceptsDocumentedCodeFiveAddressFormsUsedByPointerChains() {
         val forms = listOf(
-            "58000000 00000020",
-            "58110000 00000020",
-            "58001000 00000020",
-            "58012000 00000020",
-            "58013300 00000020",
+            Triple(
+                "58000000 00000020",
+                0,
+                AddressExpression.Region(CheatMemoryRegion.Main, immediateOffset = 0x20u),
+            ),
+            Triple(
+                "58110000 00000020",
+                1,
+                AddressExpression.Region(CheatMemoryRegion.Heap, immediateOffset = 0x20u),
+            ),
+            Triple("58001000 00000020", 0, AddressExpression.Register(0, immediateOffset = 0x20u)),
+            Triple("58012000 00000020", 1, AddressExpression.Register(0, immediateOffset = 0x20u)),
+            Triple(
+                "58013300 00000020",
+                1,
+                AddressExpression.Region(
+                    CheatMemoryRegion.Main,
+                    offsetRegister = 3,
+                    immediateOffset = 0x20u,
+                ),
+            ),
         )
 
-        forms.forEach { encoded ->
+        forms.forEach { (encoded, destination, expectedAddress) ->
             val result = interpreter.interpret(parseGroup("[x]\n$encoded"))
             assertTrue("Expected valid form: $encoded, got $result", result is ValidationResult.Valid)
             val read = (result as ValidationResult.Valid).program.operations.single()
             assertTrue(read is CheatOperation.Read)
-            assertEquals(8, (read as CheatOperation.Read).widthBytes)
+            read as CheatOperation.Read
+            assertEquals(8, read.widthBytes)
+            assertEquals(destination, read.destinationRegister)
+            assertEquals(expectedAddress, read.address)
+        }
+    }
+
+    @Test
+    fun reportsDoubleExtendedOpcodesUsingAllThreeOpcodeNibbles() {
+        listOf(
+            "FFF00000" to 0xFFF,
+            "FF000000" to 0xFF0,
+            "FF100000" to 0xFF1,
+        ).forEach { (encoded, expectedOpcode) ->
+            val result = interpreter.interpret(parseGroup("[x]\n$encoded"))
+            assertTrue(result is ValidationResult.Invalid)
+            val error = (result as ValidationResult.Invalid).error
+            assertTrue(error is CheatValidationError.UnsupportedOpcode)
+            assertEquals(expectedOpcode, (error as CheatValidationError.UnsupportedOpcode).opcode)
         }
     }
 

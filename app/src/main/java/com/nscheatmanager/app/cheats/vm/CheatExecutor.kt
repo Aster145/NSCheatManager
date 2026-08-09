@@ -52,9 +52,13 @@ class CheatExecutor(
                         completedWrites++
                     }
                     is CheatOperation.Arithmetic -> {
-                        val right = operation.immediate
-                            ?: operation.rightRegister?.let(registers::get)
-                            ?: 0u
+                        val right = if (operation.kind == ArithmeticKind.Move) {
+                            0u
+                        } else {
+                            operation.immediate
+                                ?: operation.rightRegister?.let(registers::get)
+                                ?: 0u
+                        }
                         registers[operation.destinationRegister] = CheatValidator.evaluateArithmetic(
                             operation,
                             registers[operation.leftRegister],
@@ -81,6 +85,7 @@ class CheatExecutor(
     ) {
         val address = operation.address.resolve(identity, registers)
         if (address == 0uL) throw InvalidPointerException()
+        checkedMemorySpan(address, operation.widthBytes)
         val bytes = memory.read(MemoryTarget.Absolute(address), operation.widthBytes)
         if (bytes.size != operation.widthBytes) {
             throw ProtocolError.MalformedResponse(
@@ -102,6 +107,7 @@ class CheatExecutor(
     ) {
         val address = operation.address.resolve(identity, registers)
         if (address == 0uL) throw InvalidPointerException()
+        checkedMemorySpan(address, operation.widthBytes)
         val incremented = operation.incrementRegister?.let { register ->
             register to checkedAdd(registers[register], operation.widthBytes.toULong())
         }
