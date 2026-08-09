@@ -29,6 +29,7 @@ class CheatFileParser {
                 }
 
                 if (trimmed.startsWith("[")) {
+                    currentGroup = null
                     diagnostics += CheatParseDiagnostic(lineNumber, "Malformed group header")
                     return@forEachIndexed
                 }
@@ -40,13 +41,6 @@ class CheatFileParser {
                 }
 
                 val words = trimmed.split(Whitespace)
-                if (words.size < MinimumInstructionWords) {
-                    diagnostics += CheatParseDiagnostic(
-                        lineNumber,
-                        "Instruction must contain at least two words",
-                    )
-                    return@forEachIndexed
-                }
                 if (words.any { !HexWord.matches(it) }) {
                     diagnostics += CheatParseDiagnostic(
                         lineNumber,
@@ -84,7 +78,6 @@ class CheatFileParser {
     )
 
     private companion object {
-        const val MinimumInstructionWords = 2
         val HexWord = Regex("[0-9A-Fa-f]{8}")
         val Whitespace = Regex("\\s+")
     }

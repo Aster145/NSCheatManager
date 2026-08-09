@@ -77,7 +77,23 @@ class CheatFileParserTest {
     }
 
     @Test
-    fun reportsBadHexAndMissingInstructionWords() {
+    fun invalidatesCurrentGroupAfterMalformedHeader() {
+        val file = parser.parse(
+            "[first]\n" +
+                "580F0000 046A12B0\n" +
+                "[broken\n" +
+                "580F0000 00000001\n" +
+                "[next]\n" +
+                "580F0000 00000002",
+        )
+
+        assertEquals(listOf(3, 4), file.diagnostics.map { it.line })
+        assertEquals(listOf(2), file.groups.first().instructions.map { it.sourceLine })
+        assertEquals(listOf(6), file.groups.last().instructions.map { it.sourceLine })
+    }
+
+    @Test
+    fun reportsBadHexWithoutApplyingOpcodeDependentArityRules() {
         val file = parser.parse(
             "[group]\n" +
                 "580F000G 046A12B0\n" +
@@ -85,10 +101,9 @@ class CheatFileParserTest {
                 "640F0000 00000000 00000064",
         )
 
-        assertEquals(listOf(2, 3), file.diagnostics.map { it.line })
+        assertEquals(listOf(2), file.diagnostics.map { it.line })
         assertEquals("Instruction words must be exactly eight hexadecimal characters", file.diagnostics[0].message)
-        assertEquals("Instruction must contain at least two words", file.diagnostics[1].message)
-        assertEquals(listOf(4), file.groups.single().instructions.map { it.sourceLine })
+        assertEquals(listOf(3, 4), file.groups.single().instructions.map { it.sourceLine })
     }
 
     @Test
@@ -97,5 +112,16 @@ class CheatFileParserTest {
 
         assertTrue(file.diagnostics.isEmpty())
         assertEquals(listOf(0x10000000u, 0u), file.groups.single().instructions.single().words)
+    }
+
+    @Test
+    fun keepsSyntacticallyValidSingleWordInstructionsForValidator() {
+        val file = parser.parse("[single word]\n20000000\nA4010000")
+
+        assertTrue(file.diagnostics.isEmpty())
+        assertEquals(
+            listOf(listOf(0x20000000u), listOf(0xA4010000u)),
+            file.groups.single().instructions.map { it.words },
+        )
     }
 }
