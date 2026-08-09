@@ -1,6 +1,7 @@
 package com.nscheatmanager.app.ui.game
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -10,12 +11,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -34,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -47,6 +53,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.domain.ConnectionState
 import com.nscheatmanager.app.domain.DeviceProfile
@@ -89,7 +96,20 @@ fun GameScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = {
+                    Column {
+                        Text(
+                            stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            stringResource(R.string.current_game),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 actions = {
                     val label = stringResource(R.string.more_options)
                     IconButton(
@@ -184,25 +204,35 @@ private fun ToggleOrderedMenuItem(
 
 @Composable
 private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow = maxWidth < 390.dp
-        if (narrow) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.fillMaxWidth())
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ConnectionButton(state, actions, Modifier.weight(1f))
-                    DetachButton(state, actions, Modifier.weight(1f))
-                }
-            }
-        } else {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(9.dp).background(
+                        if (state.connection == ConnectionState.Ready) Color(0xFF35A36B)
+                        else MaterialTheme.colorScheme.outline,
+                        CircleShape,
+                    ),
+                )
+                Spacer(Modifier.width(10.dp))
                 DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f))
-                ConnectionButton(state, actions)
-                DetachButton(state, actions)
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 280.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ConnectionButton(state, actions, Modifier.fillMaxWidth())
+                        DetachButton(state, actions, Modifier.fillMaxWidth())
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ConnectionButton(state, actions, Modifier.weight(1f))
+                        DetachButton(state, actions, Modifier.weight(1f))
+                    }
+                }
             }
         }
     }
@@ -266,21 +296,56 @@ private fun DetachButton(state: GameUiState, actions: GameScreenActions, modifie
 
 @Composable
 private fun GameIdentityCard(state: GameUiState) {
-    Card(Modifier.fillMaxWidth().testTag("game-identity")) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.current_game), style = MaterialTheme.typography.titleMedium)
-            IdentityLine("TID", state.titleId)
-            IdentityLine("BID", state.buildId)
-            IdentityLine(stringResource(R.string.main_base), state.mainBase)
-            IdentityLine(stringResource(R.string.heap_base), state.heapBase)
-            state.mirrorPath?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("game-identity"),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.current_game),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
+                    )
+                    Text(
+                        state.titleId?.let { "TID $it" } ?: "TID —",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                if (state.gameValidated) Text("●", color = Color(0xFFB7F2CF))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                IdentityBlock("BID", state.buildId, Modifier.weight(1f))
+                IdentityBlock(stringResource(R.string.main_base), state.mainBase, Modifier.weight(1f))
+            }
+            IdentityBlock(stringResource(R.string.heap_base), state.heapBase)
+            state.mirrorPath?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.68f),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun IdentityLine(label: String, value: String?) {
-    Text("$label: ${value ?: "—"}")
+private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            label.uppercase(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.65f),
+        )
+        Text(value ?: "—", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
 }
 
 @Composable

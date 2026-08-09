@@ -101,12 +101,12 @@ interface GameExternalActions {
     data object Platform : GameExternalActions
 }
 
-private data class MainDestination(val route: String, val label: Int, val tag: String)
+private data class MainDestination(val route: String, val label: Int, val tag: String, val glyph: String)
 
 private val mainDestinations = listOf(
-    MainDestination("game", R.string.nav_game, "nav-game"),
-    MainDestination("cheats", R.string.nav_cheats, "nav-cheats"),
-    MainDestination("memory", R.string.nav_memory, "nav-memory"),
+    MainDestination("game", R.string.nav_game, "nav-game", "▣"),
+    MainDestination("cheats", R.string.nav_cheats, "nav-cheats", "✦"),
+    MainDestination("memory", R.string.nav_memory, "nav-memory", "⌁"),
 )
 
 @Composable
@@ -210,7 +210,7 @@ fun NSCheatManagerApp(
                         modifier = Modifier.testTag(destination.tag),
                         selected = route == destination.route,
                         onClick = { requestNavigation(destination.route) },
-                        icon = {},
+                        icon = { Text(destination.glyph) },
                         label = { Text(stringResource(destination.label)) },
                     )
                 }
