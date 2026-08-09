@@ -17,6 +17,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.nscheatmanager.app.ui.memory.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import java.util.Locale
 
 class MemoryScreenTest {
@@ -53,8 +58,8 @@ class MemoryScreenTest {
         compose.onNodeWithText("2A 00 00 00", substring = true).assertExists()
     }
 
-    @Test fun explicit320DpEnglishHostIsLocalizedAndUnclipped() = verifyLocale("en", "Absolute 0x10")
-    @Test fun explicit320DpChineseHostIsLocalizedAndUnclipped() = verifyLocale("zh-CN", "绝对地址 0x10")
+    @Test fun explicit320DpEnglishHostIsLocalizedAndUnclipped() = verifyLocale("en", "Absolute 0x10", "Lock")
+    @Test fun explicit320DpChineseHostIsLocalizedAndUnclipped() = verifyLocale("zh-CN", "绝对地址 0x10", "锁定")
 
     @Test fun copyPlacesExactRawAndTypedTextOnClipboardAndTimeIsReadable() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -64,9 +69,9 @@ class MemoryScreenTest {
         localizedContent("en") { MemoryScreen(state, MemoryActions.None, Modifier.width(320.dp)) }
         compose.onNodeWithTag("memory-copy").performScrollTo().performClick()
         compose.waitForIdle()
-        assert(clipboard.primaryClip?.getItemAt(0)?.coerceToText(context).toString() == "2A 00 00 00\n42")
+        assertEquals("2A 00 00 00\n42", clipboard.primaryClip?.getItemAt(0)?.coerceToText(context).toString())
         val time = compose.onNodeWithTag("memory-result-time").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString("")
-        assert(time != "0" && time.any(Char::isDigit))
+        assertTrue("Localized time must not be a raw epoch", time != "0" && time.any(Char::isDigit))
         clipboard.clearPrimaryClip()
     }
 
@@ -77,20 +82,32 @@ class MemoryScreenTest {
         compose.setContent { CompositionLocalProvider(LocalContext provides localized, LocalResources provides localized.resources, content = content) }
     }
 
-    private fun verifyLocale(tag: String, targetText: String) {
-        localizedContent(tag) { MemoryScreen(MemoryUiState(ready = true, confirmation = confirmation()), MemoryActions.None, Modifier.width(320.dp).testTag("memory-320")) }
+    private fun verifyLocale(tag: String, targetText: String, lockLabel: String) {
+        lateinit var screenState: MutableState<MemoryUiState>
+        localizedContent(tag) {
+            screenState = remember { mutableStateOf(MemoryUiState(ready = true, confirmation = confirmation())) }
+            MemoryScreen(screenState.value, MemoryActions.None, Modifier.width(320.dp).testTag("memory-320"))
+        }
         compose.onNodeWithTag("memory-address").assertIsEnabled()
         compose.onNodeWithTag("memory-read").performScrollTo().assertIsEnabled().assertIsDisplayed()
+        compose.onNodeWithTag("memory-write").assertIsEnabled().assertIsDisplayed()
         compose.onNodeWithTag("memory-lock").performScrollTo().assertIsEnabled().assertIsOff()
         compose.onNodeWithText(targetText, substring = true).assertExists()
         val root = compose.onNodeWithTag("memory-320").fetchSemanticsNode().boundsInRoot
-        val control = compose.onNodeWithTag("memory-lock").fetchSemanticsNode().boundsInRoot
-        assert(control.left >= root.left && control.right <= root.right)
+        listOf("memory-action-row", "memory-read", "memory-write", "memory-lock").forEach { tagName ->
+            val bounds = compose.onNodeWithTag(tagName).fetchSemanticsNode().boundsInRoot
+            assertTrue("$tagName left bound must stay inside 320dp root", bounds.left >= root.left)
+            assertTrue("$tagName right bound must stay inside 320dp root", bounds.right <= root.right)
+        }
+        compose.runOnIdle { screenState.value = MemoryUiState(ready = false, locked = lockedValue(), confirmation = confirmation()) }
+        compose.onNodeWithTag("memory-lock").assertTextContains(lockLabel).assertIsToggleable().assertIsOn().assertIsNotEnabled()
     }
 
     private fun confirmation() = WriteConfirmation(1, MemoryViewModelTestData.key,
         com.nscheatmanager.app.core.model.MemoryTarget.Absolute(0x10u), MemoryTargetDisplay(AddressMode.Absolute, "10", 0x10u),
         com.nscheatmanager.app.core.model.ValueType.Int32, "42", com.nscheatmanager.app.domain.ImmutableBytes.copyOf(byteArrayOf(42,0,0,0)))
+    private fun lockedValue() = com.nscheatmanager.app.domain.LockedValue(com.nscheatmanager.app.core.model.MemoryTarget.Absolute(0x10u), 0x10u,
+        com.nscheatmanager.app.core.model.ValueType.Int32, com.nscheatmanager.app.domain.ImmutableBytes.copyOf(byteArrayOf(42,0,0,0)))
 }
 
 private object MemoryViewModelTestData {

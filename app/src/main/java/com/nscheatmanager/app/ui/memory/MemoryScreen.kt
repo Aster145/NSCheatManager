@@ -40,9 +40,9 @@ data class MemoryActions(
         TypeSelector(state.type, enabled, actions.type)
         if (state.type == ValueType.Hex) OutlinedTextField(state.length, actions.length, Modifier.fillMaxWidth(), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_length)) })
         OutlinedTextField(state.value, actions.value, Modifier.fillMaxWidth().testTag("memory-value"), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_value)) })
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().testTag("memory-action-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(actions.read, Modifier.weight(1f).testTag("memory-read"), enabled = enabled) { Text(stringResource(R.string.memory_read)) }
-            Button(actions.write, Modifier.weight(1f), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
+            Button(actions.write, Modifier.weight(1f).testTag("memory-write"), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
             Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = state.ready && !state.busy, role = Role.Checkbox, onValueChange = actions.lock).semantics(mergeDescendants = true) {}) {
                 Checkbox(state.locked != null, null, enabled = state.ready && !state.busy)
                 Text(stringResource(R.string.memory_lock), Modifier.padding(top = 12.dp))
