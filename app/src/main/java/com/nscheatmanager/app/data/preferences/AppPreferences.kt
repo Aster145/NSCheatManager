@@ -30,6 +30,10 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         .map { it[SHOW_MEMORY_PAGE] ?: false }
         .distinctUntilChanged()
 
+    val detachDmntBeforeConnect: Flow<Boolean> = dataStore.data
+        .map { it[DETACH_DMNT_BEFORE_CONNECT] ?: true }
+        .distinctUntilChanged()
+
     suspend fun setSelectedDeviceId(deviceId: String) {
         require(deviceId.isNotBlank()) { "Device ID must not be blank" }
         dataStore.edit { it[SELECTED_DEVICE_ID] = deviceId }
@@ -48,6 +52,10 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[SHOW_MEMORY_PAGE] = show }
     }
 
+    suspend fun setDetachDmntBeforeConnect(enabled: Boolean) {
+        dataStore.edit { it[DETACH_DMNT_BEFORE_CONNECT] = enabled }
+    }
+
     companion object {
         const val CHINESE_LANGUAGE_TAG = "zh-CN"
         const val ENGLISH_LANGUAGE_TAG = "en"
@@ -59,5 +67,6 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         private val SELECTED_DEVICE_ID = stringPreferencesKey("selected_device_id")
         private val LANGUAGE_TAG = stringPreferencesKey("language_tag")
         private val SHOW_MEMORY_PAGE = booleanPreferencesKey("show_memory_page")
+        private val DETACH_DMNT_BEFORE_CONNECT = booleanPreferencesKey("detach_dmnt_before_connect")
     }
 }

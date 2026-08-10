@@ -231,10 +231,8 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(9.dp).background(
                         if (state.connection == ConnectionState.Ready) Color(0xFF35A36B)
@@ -243,9 +241,11 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
                     ),
                 )
             Spacer(Modifier.width(6.dp))
-            DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f))
+            DeviceSelector(state.devices, state.selectedDeviceId, actions.selectDevice, Modifier.weight(1f), enabled = !state.preparingConnection)
             Spacer(Modifier.width(6.dp))
             ConnectionButton(state, actions)
+            }
+            state.connectionSummary?.let { ConnectionSummaryText(it) }
         }
     }
 }
@@ -256,6 +256,7 @@ private fun DeviceSelector(
     selectedId: String?,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selected = devices.firstOrNull { it.id == selectedId }
@@ -263,13 +264,13 @@ private fun DeviceSelector(
         OutlinedButton(
             modifier = Modifier.fillMaxWidth().testTag("device-selector"),
             onClick = { expanded = true },
-            enabled = devices.isNotEmpty(),
+            enabled = devices.isNotEmpty() && enabled,
             border = null,
             contentPadding = ButtonDefaults.ContentPadding,
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Text(
-                    selected?.name ?: stringResource(R.string.select_device),
+                    selected?.name ?: stringResource(if (devices.isEmpty()) R.string.add_device_first else R.string.select_device),
                     style = MaterialTheme.typography.labelLarge,
                 )
                 selected?.let {
@@ -297,12 +298,14 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
     Button(
         modifier = modifier.testTag("connect-toggle"),
         onClick = actions.connectionToggle,
-        enabled = state.selectedDeviceId != null && !state.busy,
+        enabled = state.selectedDeviceId != null && (!state.busy || state.preparingConnection),
         contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
     ) {
         Text(
             stringResource(
-                if (state.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing, ConnectionState.Ready)) {
+                if (state.preparingConnection || state.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing)) {
+                    R.string.cancel
+                } else if (state.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing, ConnectionState.Ready)) {
                     R.string.disconnect
                 } else {
                     R.string.connect
@@ -329,8 +332,28 @@ private fun DetachButton(state: GameUiState, actions: GameScreenActions, modifie
     OutlinedButton(
         modifier = modifier.testTag("detach-dmnt"),
         onClick = actions.detachDmnt,
-        enabled = state.selectedDeviceId != null && !state.detachingDmnt,
+        enabled = state.selectedDeviceId != null && !state.detachingDmnt && !state.preparingConnection && state.connection !in setOf(ConnectionState.Connecting, ConnectionState.Recognizing),
     ) { Text(stringResource(R.string.detach_dmnt)) }
+}
+
+@Composable
+private fun ConnectionSummaryText(summary: ConnectionSummary) {
+    Text(
+        stringResource(when (summary) {
+            ConnectionSummary.DETACHED_CONNECTED -> R.string.connection_summary_detached_connected
+            ConnectionSummary.DETACH_FAILED_CONNECTED -> R.string.connection_summary_detach_failed_connected
+            ConnectionSummary.DETACHED_CONNECT_FAILED -> R.string.connection_summary_detached_connect_failed
+            ConnectionSummary.DETACH_FAILED_CONNECT_FAILED -> R.string.connection_summary_both_failed
+            ConnectionSummary.CONNECTED -> R.string.connection_summary_connected
+            ConnectionSummary.CONNECT_FAILED -> R.string.connection_summary_connect_failed
+            ConnectionSummary.DETACH_SUCCEEDED -> R.string.detach_complete
+            ConnectionSummary.DETACH_FAILED -> R.string.connection_summary_detach_failed
+            ConnectionSummary.CANCELLED -> R.string.connection_cancelled
+        }),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag("connection-summary"),
+    )
 }
 
 @Composable

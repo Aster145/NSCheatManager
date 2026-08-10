@@ -42,10 +42,6 @@ data class MemoryActions(
         Row(Modifier.fillMaxWidth().testTag("memory-action-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(actions.read, Modifier.weight(1f).testTag("memory-read"), enabled = enabled) { Text(stringResource(R.string.memory_read)) }
             Button(actions.write, Modifier.weight(1f).testTag("memory-write"), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
-            Row(Modifier.weight(1f).testTag("memory-lock").toggleable(state.locked != null, enabled = state.ready && !state.busy, role = Role.Checkbox, onValueChange = actions.lock).semantics(mergeDescendants = true) {}) {
-                Checkbox(state.locked != null, null, enabled = state.ready && !state.busy)
-                Text(stringResource(R.string.memory_lock), Modifier.padding(top = 12.dp))
-            }
         }
         state.result?.let { ResultCard(it) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

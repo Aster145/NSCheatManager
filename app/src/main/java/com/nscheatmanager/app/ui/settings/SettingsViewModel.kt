@@ -21,7 +21,7 @@ enum class DeviceEditorError {
     SAVE_FAILED,
 }
 
-enum class SettingsMessage { DELETE_FAILED, DEFAULT_FAILED, LANGUAGE_FAILED, MEMORY_VISIBILITY_FAILED }
+enum class SettingsMessage { DELETE_FAILED, DEFAULT_FAILED, LANGUAGE_FAILED, MEMORY_VISIBILITY_FAILED, AUTO_DETACH_FAILED }
 
 interface DeviceSettingsRepository {
     val devices: Flow<List<DeviceProfile>>
@@ -42,8 +42,10 @@ interface DeviceSettingsRepository {
 interface LanguagePreferenceStore {
     val languageTag: Flow<String>
     val showMemoryPage: Flow<Boolean>
+    val detachDmntBeforeConnect: Flow<Boolean>
     suspend fun setLanguageTag(languageTag: String)
     suspend fun setShowMemoryPage(show: Boolean)
+    suspend fun setDetachDmntBeforeConnect(enabled: Boolean)
 }
 
 class SettingsViewModel(
@@ -70,6 +72,11 @@ class SettingsViewModel(
         viewModelScope.launch {
             preferences.showMemoryPage.collect { show ->
                 mutableUiState.update { it.copy(showMemoryPage = show) }
+            }
+        }
+        viewModelScope.launch {
+            preferences.detachDmntBeforeConnect.collect { enabled ->
+                mutableUiState.update { it.copy(detachDmntBeforeConnect = enabled) }
             }
         }
     }
@@ -194,6 +201,18 @@ class SettingsViewModel(
         }
     }
 
+    fun setDetachDmntBeforeConnect(enabled: Boolean) {
+        val previous = mutableUiState.value.detachDmntBeforeConnect
+        if (previous == enabled) return
+        mutableUiState.update { it.copy(detachDmntBeforeConnect = enabled) }
+        viewModelScope.launch {
+            runCatching { preferences.setDetachDmntBeforeConnect(enabled) }.onFailure {
+                mutableUiState.update { state -> state.copy(detachDmntBeforeConnect = previous) }
+                mutableMessages.emit(SettingsMessage.AUTO_DETACH_FAILED)
+            }
+        }
+    }
+
     class Factory(
         private val devices: DeviceSettingsRepository,
         private val preferences: LanguagePreferenceStore,
@@ -228,8 +247,10 @@ class DeviceRepositoryAdapter(private val delegate: DeviceRepository) : DeviceSe
 class AppPreferencesAdapter(private val delegate: AppPreferences) : LanguagePreferenceStore {
     override val languageTag: Flow<String> = delegate.languageTag
     override val showMemoryPage: Flow<Boolean> = delegate.showMemoryPage
+    override val detachDmntBeforeConnect: Flow<Boolean> = delegate.detachDmntBeforeConnect
     override suspend fun setLanguageTag(languageTag: String) = delegate.setLanguageTag(languageTag)
     override suspend fun setShowMemoryPage(show: Boolean) = delegate.setShowMemoryPage(show)
+    override suspend fun setDetachDmntBeforeConnect(enabled: Boolean) = delegate.setDetachDmntBeforeConnect(enabled)
 }
 
 private sealed interface EditorValidation {

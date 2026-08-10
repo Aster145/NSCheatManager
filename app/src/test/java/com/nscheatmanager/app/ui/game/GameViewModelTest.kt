@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -68,6 +69,47 @@ class GameViewModelTest {
 
         assertEquals(listOf(DEVICE), session.connects)
         assertEquals(0, session.manualRecognitions)
+    }
+
+    @Test
+    fun connectDetachesFirstAndReportsCombinedSuccess() = runTest(dispatcher) {
+        val session = FakeSessionGateway()
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
+        advanceUntilIdle()
+        viewModel.onConnectionToggle(detachBeforeConnect = true)
+        runCurrent()
+        assertEquals(listOf("detach", "connect"), session.order)
+        session.state.value = readyState(null)
+        advanceUntilIdle()
+        assertEquals(ConnectionSummary.DETACHED_CONNECTED, viewModel.uiState.value.connectionSummary)
+        assertEquals(GameMessage.DETACHED_CONNECTED, (viewModel.effects.first() as GameEffect.Message).message)
+    }
+
+    @Test
+    fun detachFailureStillConnectsAndSecondTapCancelsPreflight() = runTest(dispatcher) {
+        val failed = FakeSessionGateway(detachFailure = IllegalStateException("noexs"))
+        val failedVm = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), failed, FakeGameFileGateway())
+        advanceUntilIdle(); failedVm.onConnectionToggle(true); runCurrent()
+        assertEquals(listOf("detach", "connect"), failed.order)
+
+        val gate = CompletableDeferred<Unit>()
+        val hanging = FakeSessionGateway(detachGate = gate)
+        val vm = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), hanging, FakeGameFileGateway())
+        advanceUntilIdle(); vm.onConnectionToggle(true); runCurrent()
+        assertTrue(vm.uiState.value.preparingConnection)
+        vm.onConnectionToggle(true); runCurrent()
+        assertEquals(ConnectionSummary.CANCELLED, vm.uiState.value.connectionSummary)
+        assertTrue(hanging.connects.isEmpty())
+    }
+
+    @Test
+    fun automaticDetachTimeoutStillContinuesToSysbotConnection() = runTest(dispatcher) {
+        val session = FakeSessionGateway(detachGate = CompletableDeferred())
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
+        advanceUntilIdle(); viewModel.onConnectionToggle(true); runCurrent()
+        advanceTimeBy(3_001); runCurrent()
+        assertEquals(listOf("detach", "connect"), session.order)
+        assertFalse(viewModel.uiState.value.preparingConnection)
     }
 
     @Test
@@ -430,21 +472,24 @@ class GameViewModelTest {
         private val acknowledgeExecution: Boolean = true,
         private val executionReport: ExecutionReport = ExecutionReport(ExecutionStatus.Complete, completedWrites = 1),
         private val detachFailure: Throwable? = null,
+        private val detachGate: CompletableDeferred<Unit>? = null,
     ) : GameSessionGateway {
         override val state = MutableStateFlow(DeviceSessionState())
         val connects = mutableListOf<DeviceProfile>()
+        val order = mutableListOf<String>()
         var manualRecognitions = 0
         val executions = mutableListOf<String>()
         val unchecks = mutableListOf<String>()
 
         override fun connectAndRecognize(device: DeviceProfile) {
+            order += "connect"
             connects += device
         }
 
         override fun switchDevice(device: DeviceProfile) = Unit
         override fun disconnect() = Unit
         override fun recognizeAgain() { manualRecognitions++ }
-        override suspend fun detachDmnt() { detachFailure?.let { throw it } }
+        override suspend fun detachDmnt() { order += "detach"; detachGate?.await(); detachFailure?.let { throw it } }
 
         override fun currentOperationKey(): GameOperationKey? = state.value.operationKey
 

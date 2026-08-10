@@ -27,11 +27,11 @@ import java.util.Locale
 class MemoryScreenTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun controlsAndNativeLockAreAccessibleAtCompactWidth() {
+    @Test fun controlsAreAccessibleAndLockIsHiddenAtCompactWidth() {
         compose.setContent { MemoryScreen(MemoryUiState(), MemoryActions.None) }
         compose.onNodeWithTag("memory-address").assertIsDisplayed().assertIsNotEnabled()
         compose.onNodeWithTag("memory-read").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsDisplayed().assertIsToggleable().assertIsNotEnabled()
+        compose.onNodeWithTag("memory-lock").assertDoesNotExist()
     }
 
     @Test fun lockedReadyStateIsCheckedAndDisablesEveryParameterWhileResultAndCopyRemainReachable() {
@@ -42,7 +42,7 @@ class MemoryScreenTest {
         compose.setContent { MemoryScreen(state, MemoryActions.None) }
         compose.onNodeWithTag("memory-address").assertIsNotEnabled()
         compose.onNodeWithTag("memory-value").assertIsNotEnabled()
-        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsOn()
+        compose.onNodeWithTag("memory-lock").assertDoesNotExist()
         compose.onNodeWithTag("memory-result").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("memory-copy").assertIsDisplayed().assertHasClickAction()
     }
@@ -91,16 +91,16 @@ class MemoryScreenTest {
         compose.onNodeWithTag("memory-address").assertIsEnabled()
         compose.onNodeWithTag("memory-read").performScrollTo().assertIsEnabled().assertIsDisplayed()
         compose.onNodeWithTag("memory-write").assertIsEnabled().assertIsDisplayed()
-        compose.onNodeWithTag("memory-lock").performScrollTo().assertIsEnabled().assertIsOff()
+        compose.onNodeWithTag("memory-lock").assertDoesNotExist()
         compose.onNodeWithText(targetText, substring = true).assertExists()
         val root = compose.onNodeWithTag("memory-320").fetchSemanticsNode().boundsInRoot
-        listOf("memory-action-row", "memory-read", "memory-write", "memory-lock").forEach { tagName ->
+        listOf("memory-action-row", "memory-read", "memory-write").forEach { tagName ->
             val bounds = compose.onNodeWithTag(tagName).fetchSemanticsNode().boundsInRoot
             assertTrue("$tagName left bound must stay inside 320dp root", bounds.left >= root.left)
             assertTrue("$tagName right bound must stay inside 320dp root", bounds.right <= root.right)
         }
         compose.runOnIdle { screenState.value = MemoryUiState(ready = false, locked = lockedValue(), confirmation = confirmation()) }
-        compose.onNodeWithTag("memory-lock").assertTextContains(lockLabel).assertIsToggleable().assertIsOn().assertIsNotEnabled()
+        compose.onNodeWithTag("memory-lock").assertDoesNotExist()
     }
 
     private fun confirmation() = WriteConfirmation(1, MemoryViewModelTestData.key,

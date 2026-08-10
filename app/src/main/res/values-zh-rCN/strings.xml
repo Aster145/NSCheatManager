@@ -163,4 +163,16 @@
     <string name="memory_import_json">&#23548;&#20837; JSON</string><string name="memory_export_json">&#23548;&#20986; JSON</string>
     <string name="memory_import_conflicts">&#21517;&#31216;&#20914;&#31361;</string><string name="memory_import_count">&#21363;&#23558;&#23548;&#20837; %1$d &#20010;&#20070;&#31614;&#65292;&#37325;&#21517;&#26102;&#22914;&#20309;&#22788;&#29702;&#65311;</string>
     <string name="memory_skip_conflicts">&#36339;&#36807;&#37325;&#21517;</string><string name="memory_overwrite_conflicts">&#35206;&#30422;</string>
+    <string name="detach_before_connect">&#36830;&#25509;&#21069;&#33258;&#21160;&#20998;&#31163; dmnt</string>
+    <string name="detach_before_connect_summary">&#28857;&#20987;&#36830;&#25509;&#26102;&#65292;&#20808;&#36890;&#36807; Noexs 7331 &#35831;&#27714;&#20998;&#31163; dmnt&#65292;&#20877;&#36830;&#25509; sys-botbase&#12290;</string>
+    <string name="error_auto_detach_change">&#26080;&#27861;&#20445;&#23384;&#33258;&#21160;&#20998;&#31163; dmnt &#35774;&#32622;&#12290;</string>
+    <string name="connection_summary_detached_connected">dmnt &#24050;&#20998;&#31163; &#183; Switch &#24050;&#36830;&#25509;</string>
+    <string name="connection_summary_detach_failed_connected">dmnt &#20998;&#31163;&#22833;&#36133; &#183; Switch &#24050;&#36830;&#25509;</string>
+    <string name="connection_summary_detached_connect_failed">dmnt &#24050;&#20998;&#31163; &#183; Switch &#36830;&#25509;&#22833;&#36133;</string>
+    <string name="connection_summary_both_failed">dmnt &#20998;&#31163;&#22833;&#36133; &#183; Switch &#36830;&#25509;&#22833;&#36133;</string>
+    <string name="connection_summary_connected">Switch &#24050;&#36830;&#25509;</string>
+    <string name="connection_summary_connect_failed">Switch &#36830;&#25509;&#22833;&#36133;</string>
+    <string name="connection_summary_detach_failed">dmnt &#20998;&#31163;&#22833;&#36133;</string>
+    <string name="connection_cancelled">&#36830;&#25509;&#24050;&#21462;&#28040;</string>
+    <string name="add_device_first">&#35831;&#20808;&#22312;&#35774;&#32622;&#20013;&#28155;&#21152;&#35774;&#22791;</string>
 </resources>

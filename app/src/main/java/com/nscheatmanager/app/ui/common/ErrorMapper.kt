@@ -90,6 +90,7 @@ object ErrorMapper {
             SettingsMessage.DEFAULT_FAILED -> R.string.error_default_device
             SettingsMessage.LANGUAGE_FAILED -> R.string.error_language_change
             SettingsMessage.MEMORY_VISIBILITY_FAILED -> R.string.error_memory_visibility_change
+            SettingsMessage.AUTO_DETACH_FAILED -> R.string.error_auto_detach_change
         }, DiagnosticDetail(ErrorCategory.SETTINGS),
     )
 

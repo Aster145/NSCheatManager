@@ -21,10 +21,13 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -68,6 +71,11 @@ class SettingsAndAboutTest {
             )
         }
         compose.onNodeWithTag("nav-memory").assertDoesNotExist()
+        compose.onNodeWithTag("game-screen").assertIsDisplayed()
+        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
+        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
         compose.runOnIdle { showMemory = true }
         compose.onNodeWithTag("nav-memory").assertIsDisplayed()
     }
@@ -103,6 +111,8 @@ class SettingsAndAboutTest {
         compose.onNodeWithTag("delete-living").assertIsDisplayed()
         compose.onNodeWithText("Bedroom Switch").assertIsDisplayed()
         compose.onAllNodesWithText("6000").assertCountEquals(2)
+        compose.onNodeWithTag("auto-detach-setting").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("auto-detach-switch").assertIsOn()
         compose.onAllNodesWithText("21").assertCountEquals(2)
         compose.onAllNodesWithText("7331").assertCountEquals(2)
     }
@@ -291,7 +301,7 @@ class SettingsAndAboutTest {
     }
 
     @Test
-    fun appStartsOnCheatsAndNavigatesThroughBottomBarAndOverflow() {
+    fun appStartsOnGameAndNavigatesThroughBottomBarAndOverflow() {
         compose.setContent {
             NSCheatManagerApp(
                 settingsState = SettingsUiState(languageTag = "en"),
@@ -300,9 +310,10 @@ class SettingsAndAboutTest {
             )
         }
 
+        compose.onNodeWithTag("game-screen").assertIsDisplayed()
+        compose.onNodeWithTag("nav-cheats").performClick()
         compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
         compose.onNodeWithTag("nav-game").performClick()
-        compose.onNodeWithTag("game-screen").assertIsDisplayed()
         compose.onNodeWithTag("overflow-menu").performClick()
         compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()
@@ -395,6 +406,7 @@ class SettingsAndAboutTest {
     private class FakeLanguagePreferences(initial: String) : LanguagePreferenceStore {
         override val languageTag = MutableStateFlow(initial)
         override val showMemoryPage = MutableStateFlow(false)
+        override val detachDmntBeforeConnect = MutableStateFlow(true)
         val writes = mutableListOf<String>()
         var failWrites = false
 
@@ -407,6 +419,9 @@ class SettingsAndAboutTest {
 
         override suspend fun setShowMemoryPage(show: Boolean) {
             showMemoryPage.value = show
+        }
+        override suspend fun setDetachDmntBeforeConnect(enabled: Boolean) {
+            detachDmntBeforeConnect.value = enabled
         }
     }
 }
