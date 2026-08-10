@@ -124,7 +124,6 @@ class CheatFirstFlowTest {
             .assertIsToggleable()
             .assertContentDescriptionContains("Line 18", substring = true)
             .assertContentDescriptionContains("opcode 0x8", substring = true)
-        compose.onNodeWithTag("cheat-info-Key trigger", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Line 18 · unsupported opcode 0x8", substring = true).assertIsDisplayed()
     }
 
@@ -138,7 +137,6 @@ class CheatFirstFlowTest {
             .assertIsNotEnabled()
             .assertContentDescriptionContains("Line 18", substring = true)
             .assertContentDescriptionContains("0x8", substring = true)
-        compose.onNodeWithTag("cheat-info-Write once", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Last executed:", substring = true).assertIsDisplayed()
     }
 
@@ -152,7 +150,6 @@ class CheatFirstFlowTest {
             .assertIsNotEnabled()
             .assertContentDescriptionContains("第 18 行", substring = true)
             .assertContentDescriptionContains("0x8", substring = true)
-        compose.onNodeWithTag("cheat-info-Write once", useUnmergedTree = true).performClick()
         compose.onNodeWithText("上次执行：", substring = true).assertIsDisplayed()
     }
 

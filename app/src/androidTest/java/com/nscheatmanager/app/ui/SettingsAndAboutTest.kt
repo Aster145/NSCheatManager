@@ -110,9 +110,11 @@ class SettingsAndAboutTest {
         compose.onNodeWithTag("edit-living").assertIsDisplayed()
         compose.onNodeWithTag("delete-living").assertIsDisplayed()
         compose.onNodeWithText("Bedroom Switch").assertIsDisplayed()
-        compose.onAllNodesWithText("sys 6000  ·  FTP 21  ·  Noexs 7331").assertCountEquals(2)
+        compose.onAllNodesWithText("6000").assertCountEquals(2)
         compose.onNodeWithTag("auto-detach-setting").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("auto-detach-switch").assertIsOn()
+        compose.onAllNodesWithText("21").assertCountEquals(2)
+        compose.onAllNodesWithText("7331").assertCountEquals(2)
     }
 
     @Test

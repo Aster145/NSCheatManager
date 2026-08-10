@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,7 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -119,23 +117,23 @@ fun GameScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                modifier = Modifier.height(52.dp),
+                modifier = Modifier.height(68.dp),
                 windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(
+                            Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(
                                 Brush.linearGradient(listOf(Color(0xFFFFC928), Color(0xFFEC9E12))),
                             ), contentAlignment = Alignment.Center,
-                        ) { Text("◆", color = Color.White, fontSize = 13.sp) }
-                        Spacer(Modifier.width(8.dp))
+                        ) { Text("◆", color = Color.White, fontSize = 17.sp) }
+                        Spacer(Modifier.width(10.dp))
                         Column {
                             Text(
                                 stringResource(if (content == GameScreenContent.Cheats) R.string.nav_cheats else R.string.current_game),
-                                fontSize = 18.sp,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
-                            Text("NSCheatManager", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("NSCheatManager", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
@@ -186,12 +184,13 @@ fun GameScreen(
         },
     ) { padding ->
         Column(
-            Modifier.padding(padding).padding(horizontal = 12.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
+            Modifier.padding(padding).padding(horizontal = 14.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (content) {
                 GameScreenContent.GameInfo -> {
                     DeviceControls(state, actions)
+                    Text(stringResource(R.string.game_information), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
                     GameIdentityCard(state)
                 }
                 GameScreenContent.Cheats -> {
@@ -210,6 +209,7 @@ fun GameScreen(
                 }
                 GameScreenContent.Combined -> {
                     DeviceControls(state, actions)
+                    Text(stringResource(R.string.game_information), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
                     GameIdentityCard(state)
                     if (editorState.isOpen) {
                         CheatEditorScreen(editorState, editorActions)
@@ -262,12 +262,12 @@ private fun ToggleOrderedMenuItem(
 private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(horizontal = 11.dp, vertical = 9.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(9.dp).background(
@@ -299,7 +299,7 @@ private fun DeviceSelector(
     val selected = devices.firstOrNull { it.id == selectedId }
     Box(modifier) {
         OutlinedButton(
-            modifier = Modifier.fillMaxWidth().height(40.dp).testTag("device-selector"),
+            modifier = Modifier.fillMaxWidth().testTag("device-selector"),
             onClick = { expanded = true },
             enabled = devices.isNotEmpty() && enabled,
             border = null,
@@ -333,7 +333,7 @@ private fun DeviceSelector(
 @Composable
 private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, modifier: Modifier = Modifier) {
     Button(
-        modifier = modifier.height(40.dp).testTag("connect-toggle"),
+        modifier = modifier.testTag("connect-toggle"),
         onClick = actions.connectionToggle,
         enabled = state.selectedDeviceId != null && (!state.busy || state.preparingConnection),
         contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
@@ -360,7 +360,7 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
 private fun GameActionRow(state: GameUiState, actions: GameScreenActions) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
-            modifier = Modifier.weight(1f).height(40.dp).testTag("recognize-game-primary"),
+            modifier = Modifier.weight(1f).testTag("recognize-game-primary"),
             onClick = actions.recognize,
             enabled = state.connection == ConnectionState.Ready && !state.busy,
         ) { Text(stringResource(R.string.recognize_game)) }
@@ -371,7 +371,7 @@ private fun GameActionRow(state: GameUiState, actions: GameScreenActions) {
 @Composable
 private fun DetachButton(state: GameUiState, actions: GameScreenActions, modifier: Modifier = Modifier) {
     OutlinedButton(
-        modifier = modifier.height(40.dp).testTag("detach-dmnt"),
+        modifier = modifier.testTag("detach-dmnt"),
         onClick = actions.detachDmnt,
         enabled = state.selectedDeviceId != null && !state.detachingDmnt && !state.preparingConnection && state.connection !in setOf(ConnectionState.Connecting, ConnectionState.Recognizing),
     ) { Text(stringResource(R.string.detach_dmnt)) }
@@ -401,20 +401,21 @@ private fun ConnectionSummaryText(summary: ConnectionSummary) {
 private fun GameIdentityCard(state: GameUiState) {
     Card(
         modifier = Modifier.fillMaxWidth().testTag("game-identity"),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(stringResource(R.string.game_information), style = MaterialTheme.typography.titleMedium)
-                Text(stringResource(if (state.gameValidated) R.string.game_recognized else R.string.current_game), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier.background(Brush.linearGradient(listOf(Color(0xFF654695), Color(0xFF8F67BF)))).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(stringResource(R.string.current_game), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.72f))
+            Text(stringResource(if (state.gameValidated) R.string.game_recognized else R.string.current_game), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 IdentityBlock("TITLE ID", state.titleId, Modifier.weight(1f))
                 IdentityBlock("BUILD ID", state.buildId, Modifier.weight(1f))
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 IdentityBlock(stringResource(R.string.main_base), state.mainBase, Modifier.weight(1f))
                 IdentityBlock(stringResource(R.string.heap_base), state.heapBase, Modifier.weight(1f))
             }
@@ -428,7 +429,7 @@ private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Mo
         Text(
             label.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.65f),
         )
         Text(value ?: "—", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, maxLines = 1)
     }
@@ -436,7 +437,6 @@ private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Mo
 
 @Composable
 private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
-    var detailGroup by remember { mutableStateOf<CheatGroupUiState?>(null) }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -502,7 +502,7 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
                     role = Role.Checkbox,
                     onValueChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
                 )
-                .heightIn(min = 44.dp),
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(
@@ -513,23 +513,27 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
             )
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleSmall)
-            }
-            if (!group.executable || group.lastExecutedAtEpochMillis != null) {
-                TextButton(onClick = { detailGroup = group }, modifier = Modifier.testTag("cheat-info-${group.name}").clearAndSetSemantics { contentDescription = accessibilityLabel }) { Text("ⓘ") }
+                if (!group.executable) {
+                    Text(
+                        diagnosticText.orEmpty(),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                group.lastExecutedAtEpochMillis?.let { timestamp ->
+                    val locale = LocalConfiguration.current.locales[0]
+                    val formatted = remember(timestamp, locale) {
+                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM, locale)
+                            .format(Date(timestamp))
+                    }
+                    Text(
+                        stringResource(R.string.last_executed, formatted),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
             if (group.executing) CircularProgressIndicator(Modifier.width(24.dp))
         }
-    }
-    detailGroup?.let { group ->
-        val detail = if (!group.executable) localizedDiagnostic(group) else group.lastExecutedAtEpochMillis?.let { timestamp ->
-            val locale = LocalConfiguration.current.locales[0]
-            val formatted = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM, locale).format(Date(timestamp))
-            stringResource(R.string.last_executed, formatted)
-        }.orEmpty()
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { detailGroup = null }, title = { Text(group.name) }, text = { Text(detail) },
-            confirmButton = { androidx.compose.material3.TextButton(onClick = { detailGroup = null }) { Text(stringResource(R.string.confirm)) } },
-        )
     }
 }
 
