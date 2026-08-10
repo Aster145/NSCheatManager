@@ -9,6 +9,7 @@ import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -26,6 +27,25 @@ class SocketNoexsClient(
     }
 
     override suspend fun detachDmnt() = withContext(dispatcher) {
+        val directFailure = runCatching {
+            Socket().use { socket ->
+                connect(socket)
+                command(socket, DETACH_DMNT)
+            }
+        }.exceptionOrNull()
+        if (directFailure == null) return@withContext
+        if (directFailure is CancellationException) throw directFailure
+
+        try {
+            detachWithFullHandshake()
+        } catch (fallbackFailure: Throwable) {
+            if (fallbackFailure is CancellationException) throw fallbackFailure
+            fallbackFailure.addSuppressed(directFailure)
+            throw fallbackFailure
+        }
+    }
+
+    private fun detachWithFullHandshake() {
         Socket().use { socket ->
             connect(socket)
             // PointerSearcher-compatible "Ask dmnt to detach" handshake. Noexs is
@@ -164,7 +184,7 @@ class SocketNoexsClient(
         const val NANOS_PER_MILLISECOND = 1_000_000L
         const val PID_BYTES = 8
         const val MAX_PID_COUNT = 4096
-        const val STATUS_DRAIN_TIMEOUT_MILLIS = 25
+        const val STATUS_DRAIN_TIMEOUT_MILLIS = 250
         const val STATUS: Byte = 0x01
         const val ATTACH: Byte = 0x0A
         const val DETACH: Byte = 0x0B

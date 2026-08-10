@@ -95,6 +95,7 @@ data class GameUiState(
     val canImport: Boolean = false,
     val canDownload: Boolean = false,
     val busy: Boolean = false,
+    val detachingDmnt: Boolean = false,
     val editMode: Boolean = false,
     val pendingConfirmation: GameConfirmation? = null,
 )
@@ -283,7 +284,9 @@ class GameViewModel private constructor(
     }
 
     fun onDetachDmntRequested() {
+        if (mutableUiState.value.selectedDeviceId == null || mutableUiState.value.detachingDmnt) return
         viewModelScope.launch {
+            mutableUiState.update { it.copy(detachingDmnt = true) }
             try {
                 session.detachDmnt()
                 effectChannel.trySend(GameEffect.Message(GameMessage.DETACH_COMPLETE))
@@ -291,6 +294,8 @@ class GameViewModel private constructor(
                 throw cancelled
             } catch (error: Throwable) {
                 showNoexsFailure(error)
+            } finally {
+                mutableUiState.update { it.copy(detachingDmnt = false) }
             }
         }
     }

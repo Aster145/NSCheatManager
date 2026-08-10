@@ -21,20 +21,20 @@ import org.junit.Test
 
 class SocketNoexsClientTest {
     @Test
-    fun sendsPointerSearcherDetachHandshakeAndReadsLittleEndianResults() = runTest {
+    fun directDetachUsesOnlyDetachDmntOpcodeWhenSupported() = runTest {
         FakeBinaryServer(responses = listOf(byteArrayOf(0, 0, 0, 0))).use { server ->
             val client = newClient(server)
 
             client.detachDmnt()
 
-            assertArrayEquals(expectedHandshake(), server.received.single())
+            assertArrayEquals(byteArrayOf(0x18), server.received.single())
         }
     }
 
     @Test
     fun decodesNonzeroLittleEndianResultFields() = runTest {
         val rawCode = (0x123 shl 9) or 0x1AB
-        FakeBinaryServer(responses = listOf(littleEndian(rawCode))).use { server ->
+        FakeBinaryServer(responses = listOf(littleEndian(rawCode), littleEndian(rawCode))).use { server ->
             val client = newClient(server)
 
             val error = expectThrows<NoexsResultError> { client.detachDmnt() }
@@ -42,6 +42,33 @@ class SocketNoexsClientTest {
             assertEquals(rawCode, error.rawCode)
             assertEquals(0x1AB, error.module)
             assertEquals(0x123, error.description)
+        }
+    }
+
+    @Test
+    fun directFailureFallsBackToPointerSearcherHandshakeOnFreshSocket() = runTest {
+        FakeBinaryServer(responses = listOf(littleEndian(1), littleEndian(0))).use { server ->
+            val client = newClient(server)
+
+            client.detachDmnt()
+            server.awaitReceivedCount(2)
+
+            assertEquals(2, server.connectionCount)
+            assertArrayEquals(byteArrayOf(0x18), server.received[0])
+            assertArrayEquals(expectedHandshake(), server.received[1])
+        }
+    }
+
+    @Test
+    fun fallbackDrainsDelayedStatusTailBeforeCurrentPid() = runTest {
+        FakeBinaryServer(
+            responses = listOf(littleEndian(1), littleEndian(0)),
+            statusTail = byteArrayOf(0x44, 0x55),
+            statusTailDelayMillis = 60,
+        ).use { server ->
+            newClient(server).detachDmnt()
+            server.awaitReceivedCount(2)
+            assertArrayEquals(expectedHandshake(), server.received[1])
         }
     }
 
@@ -78,9 +105,6 @@ class SocketNoexsClientTest {
         ).use { server ->
             val client = newClient(server)
 
-            val error = expectThrows<ProtocolError.MalformedResponse> { client.detachDmnt() }
-
-            assertTrue(error.response.contains("2"))
             client.detachDmnt()
             server.awaitReceivedCount(2)
             assertEquals(2, server.connectionCount)
@@ -150,6 +174,8 @@ private class FakeBinaryServer(
     private val responses: List<ByteArray?>,
     private val closeAfterResponse: Boolean = false,
     private val fragmentDelayMillis: Long = 0,
+    private val statusTail: ByteArray = byteArrayOf(),
+    private val statusTailDelayMillis: Long = 0,
 ) : AutoCloseable {
     private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
     private val executor = Executors.newCachedThreadPool()
@@ -201,6 +227,16 @@ private class FakeBinaryServer(
                         else -> error("Unexpected opcode 0x${opcode.toString(16)}")
                     }
                     if (reply == null) continue
+                    if (opcode == 0x01) {
+                        output.write(reply)
+                        output.flush()
+                        if (statusTail.isNotEmpty()) {
+                            Thread.sleep(statusTailDelayMillis)
+                            output.write(statusTail)
+                            output.flush()
+                        }
+                        continue
+                    }
                     if (opcode == 0x18 && fragmentDelayMillis != 0L) {
                         reply.forEach { byte -> output.write(byte.toInt()); output.flush(); Thread.sleep(fragmentDelayMillis) }
                     } else {

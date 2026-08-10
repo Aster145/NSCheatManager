@@ -329,7 +329,7 @@ private fun DetachButton(state: GameUiState, actions: GameScreenActions, modifie
     OutlinedButton(
         modifier = modifier.testTag("detach-dmnt"),
         onClick = actions.detachDmnt,
-        enabled = state.connection == ConnectionState.Ready,
+        enabled = state.selectedDeviceId != null && !state.detachingDmnt,
     ) { Text(stringResource(R.string.detach_dmnt)) }
 }
 

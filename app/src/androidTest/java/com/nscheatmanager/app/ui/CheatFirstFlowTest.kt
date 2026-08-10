@@ -78,6 +78,22 @@ class CheatFirstFlowTest {
     }
 
     @Test
+    fun detachDmntUsesSelectedDeviceAndDoesNotRequireSysbotConnection() {
+        compose.setContent {
+            GameScreen(
+                state = populatedState().copy(connection = ConnectionState.Disconnected, gameValidated = false),
+                actions = GameScreenActions.None,
+            )
+        }
+        compose.onNodeWithTag("detach-dmnt").assertIsEnabled()
+
+        compose.setContent {
+            GameScreen(state = GameUiState(), actions = GameScreenActions.None)
+        }
+        compose.onNodeWithTag("detach-dmnt").assertIsNotEnabled()
+    }
+
+    @Test
     fun checkboxTransitionFiresOnceAndUnsupportedLineIsVisibleAndDisabled() {
         var state by mutableStateOf(populatedState())
         var transitions = 0

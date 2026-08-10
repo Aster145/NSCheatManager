@@ -14,7 +14,7 @@ NSCheatManager 是一个 Android 原生应用，用于连接用户拥有或获�
 - 导入、编辑、保存并分享当前游戏的金手指和独立 `notes.txt`。
 - 通过匿名被动 FTP 仅同步当前 TID/BID 的两个文件。
 - 按绝对、Main 相对、Heap 相对地址读写常用小端类型；写入前确认；可锁定并精确解锁由本应用创建的地址。
-- 通过兼容 Noexs sysmodule 只发送 `DetachDmnt` (`0x18`)。
+- 通过兼容 Noexs sysmodule 分离 dmnt：先发送 `DetachDmnt` (`0x18`)，失败时回退到兼容 PointerSearcher 的完整握手。
 - 简体中文与 English 界面；Android 8.0（API 26）及以上。
 
 ## Switch 前置条件与端口
@@ -25,7 +25,7 @@ Switch 必须位于可信局域网并使用固定 IPv4：
 |---|---:|---|
 | [sys-botbase](https://github.com/olliz0r/sys-botbase) | `6000` | 游戏识别、内存读写、freeze/unFreeze |
 | 匿名 FTP sysmodule/server | `21` | 匿名登录、被动模式、可访问 `/atmosphere/contents` |
-| 兼容 Noexs sysmodule | `7331` | 支持 `DetachDmnt` (`0x18`) 及 4 字节小端结果 |
+| 兼容 Noexs sysmodule | `7331` | 支持 `DetachDmnt` (`0x18`) 及兼容握手 |
 
 应用不会安装或更新 Switch 端组件。请按各上游项目说明安装与确认兼容性，不要把这些端口暴露到互联网。
 
@@ -101,7 +101,7 @@ This is an unofficial community project. It is not affiliated with, sponsored by
 - A fixed Switch IPv4 on a trusted LAN.
 - sys-botbase on TCP `6000`.
 - An anonymous passive FTP service on TCP `21`, with access to `/atmosphere/contents`.
-- A compatible Noexs sysmodule on TCP `7331` for the optional one-byte `DetachDmnt` (`0x18`) command.
+- A compatible Noexs sysmodule on TCP `7331` for optional dmnt detachment. The app first tries `DetachDmnt` (`0x18`) and falls back to the compatible PointerSearcher handshake if needed.
 
 Install a trusted APK after verifying its `.sha256`, add a device in Settings, then connect. Recognition runs once automatically and obtains TID, BID, Main Base, and Heap Base. Do not expose any of these unauthenticated services to the internet.
 

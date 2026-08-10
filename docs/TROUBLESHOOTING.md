@@ -27,7 +27,7 @@
 
 ### Detach dmnt 失败
 
-确认兼容 Noexs sysmodule 正在 `7331` 监听。此按钮只发送 `0x18`，不会先 attach；不兼容的 sysmodule 或协议版本会失败，但不会改变 sys-botbase 连接状态。
+确认兼容 Noexs sysmodule 正在 `7331` 监听。此按钮不依赖 sys-botbase `6000` 连接：会先发送 `0x18`，失败后用新连接尝试兼容 PointerSearcher 的完整握手；不兼容的 sysmodule 或没有前台游戏仍可能失败，但不会改变 sys-botbase 连接状态。
 
 ### 构建问题
 

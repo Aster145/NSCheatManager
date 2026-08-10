@@ -8,7 +8,7 @@
 
 - sys-botbase TCP `6000`：连接后读取 TID、BID、Main/Heap base，并执行内存 read/write/freeze/unFreeze。命令串行化，操作提交前重新核对设备、TID、BID 和会话 generation。
 - FTP TCP `21`：匿名登录、被动模式，仅同步当前已识别游戏。优先临时上传后 rename，并核对大小；服务器不支持 rename 时必须再次确认直接覆盖。
-- 兼容 Noexs TCP `7331`：只发送一字节 `0x18` (`DetachDmnt`)，精确读取 4 字节小端结果。不会 attach、pause、resume 或发送其他 Noexs 命令。
+- 兼容 Noexs TCP `7331`：先发送一字节 `0x18` (`DetachDmnt`) 并读取 4 字节小端结果；失败后使用独立新连接执行兼容 PointerSearcher 的 AttachDmnt/ListPids/Status/Attach/Detach 握手。
 
 这些服务通常没有互联网级身份验证。只应在可信局域网使用，并用网络隔离/防火墙阻止公网访问。
 
@@ -38,7 +38,7 @@ atmosphere/contents/<TID>/cheats/notes.txt
 
 ## English
 
-The app targets only the fixed IPv4 selected in Settings. sys-botbase uses TCP `6000`; anonymous passive FTP uses TCP `21`; compatible Noexs uses TCP `7331` and sends only `DetachDmnt` byte `0x18`, followed by an exact four-byte little-endian result read. The clients and failure states are independent.
+The app targets only the fixed IPv4 selected in Settings. sys-botbase uses TCP `6000`; anonymous passive FTP uses TCP `21`; compatible Noexs uses TCP `7331` independently of sys-botbase. It tries `DetachDmnt` (`0x18`) first, then retries with the documented compatible handshake only when the direct request fails.
 
 Only the current recognized game is synchronized, using:
 
