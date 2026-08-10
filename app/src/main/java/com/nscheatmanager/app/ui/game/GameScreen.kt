@@ -2,6 +2,7 @@ package com.nscheatmanager.app.ui.game
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -58,6 +60,8 @@ import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.domain.ConnectionState
 import com.nscheatmanager.app.domain.DeviceProfile
@@ -66,6 +70,11 @@ import com.nscheatmanager.app.ui.editor.CheatEditorScreen
 import com.nscheatmanager.app.ui.editor.CheatEditorUiState
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.ui.tooling.preview.Preview
+import com.nscheatmanager.app.ui.about.AboutScreen
+import com.nscheatmanager.app.ui.memory.MemoryScreen
+import com.nscheatmanager.app.ui.memory.MemoryUiState
+import com.nscheatmanager.app.ui.memory.MemoryActions
 
 data class GameScreenActions(
     val selectDevice: (String) -> Unit,
@@ -108,20 +117,45 @@ fun GameScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                modifier = Modifier.height(48.dp),
+                modifier = Modifier.height(68.dp),
                 windowInsets = WindowInsets(0, 0, 0, 0),
-                title = {},
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(
+                                Brush.linearGradient(listOf(Color(0xFFFFC928), Color(0xFFEC9E12))),
+                            ), contentAlignment = Alignment.Center,
+                        ) { Text("◆", color = Color.White, fontSize = 17.sp) }
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                stringResource(if (content == GameScreenContent.Cheats) R.string.nav_cheats else R.string.current_game),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text("NSCheatManager", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
                 actions = {
                     val label = stringResource(R.string.more_options)
                     IconButton(
                         modifier = Modifier.testTag("overflow-menu").semantics { contentDescription = label },
                         onClick = { menuExpanded = true },
                     ) { Text("⋮") }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenu(
+                        expanded = menuExpanded, onDismissRequest = { menuExpanded = false },
+                        modifier = Modifier.width(210.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp,
+                    ) {
                         ToggleOrderedMenuItem(0, "menu-edit", true, state.editMode || editorState.isOpen, text = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                             Checkbox(modifier = Modifier.clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.edit_mode))
+                            }
                         }) {
                             menuExpanded = false
                             actions.editModeChanged(!(state.editMode || editorState.isOpen))
@@ -150,14 +184,14 @@ fun GameScreen(
         },
     ) { padding ->
         Column(
-            Modifier.padding(padding).padding(horizontal = 12.dp).verticalScroll(rememberScrollState()),
+            Modifier.padding(padding).padding(horizontal = 14.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (content) {
                 GameScreenContent.GameInfo -> {
-                    GameIdentityCard(state)
                     DeviceControls(state, actions)
-                    GameActionRow(state, actions)
+                    Text(stringResource(R.string.game_information), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                    GameIdentityCard(state)
                 }
                 GameScreenContent.Cheats -> {
                     if (editorState.isOpen) {
@@ -174,12 +208,12 @@ fun GameScreen(
                     }
                 }
                 GameScreenContent.Combined -> {
-                    GameIdentityCard(state)
                     DeviceControls(state, actions)
+                    Text(stringResource(R.string.game_information), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                    GameIdentityCard(state)
                     if (editorState.isOpen) {
                         CheatEditorScreen(editorState, editorActions)
                     } else {
-                        GameActionRow(state, actions)
                         CheatGroups(state, actions)
                     }
                 }
@@ -229,9 +263,11 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(9.dp).background(
@@ -246,6 +282,7 @@ private fun DeviceControls(state: GameUiState, actions: GameScreenActions) {
             ConnectionButton(state, actions)
             }
             state.connectionSummary?.let { ConnectionSummaryText(it) }
+            GameActionRow(state, actions)
         }
     }
 }
@@ -300,6 +337,10 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
         onClick = actions.connectionToggle,
         enabled = state.selectedDeviceId != null && (!state.busy || state.preparingConnection),
         contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.primary,
+        ),
     ) {
         Text(
             stringResource(
@@ -361,32 +402,23 @@ private fun GameIdentityCard(state: GameUiState) {
     Card(
         modifier = Modifier.fillMaxWidth().testTag("game-identity"),
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
-        ),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        stringResource(R.string.current_game),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f),
-                    )
-                    Text(
-                        state.titleId?.let { "TID $it" } ?: "TID —",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                if (state.gameValidated) Text("●", color = Color(0xFFB7F2CF))
+        Column(
+            Modifier.background(Brush.linearGradient(listOf(Color(0xFF654695), Color(0xFF8F67BF)))).padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(stringResource(R.string.current_game), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.72f))
+            Text(stringResource(if (state.gameValidated) R.string.game_recognized else R.string.current_game), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                IdentityBlock("TITLE ID", state.titleId, Modifier.weight(1f))
+                IdentityBlock("BUILD ID", state.buildId, Modifier.weight(1f))
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                IdentityBlock("BID", state.buildId, Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 IdentityBlock(stringResource(R.string.main_base), state.mainBase, Modifier.weight(1f))
+                IdentityBlock(stringResource(R.string.heap_base), state.heapBase, Modifier.weight(1f))
             }
-            IdentityBlock(stringResource(R.string.heap_base), state.heapBase)
         }
     }
 }
@@ -399,7 +431,7 @@ private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Mo
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.65f),
         )
-        Text(value ?: "—", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+        Text(value ?: "—", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, maxLines = 1)
     }
 }
 
@@ -470,7 +502,7 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
                     role = Role.Checkbox,
                     onValueChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
                 )
-                .padding(vertical = 4.dp),
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(
@@ -567,5 +599,75 @@ private fun localizedDiagnostic(group: CheatGroupUiState): String {
         line != null -> line
         opcode != null -> opcode
         else -> stringResource(R.string.unsupported_cheat)
+    }
+}
+
+@Preview(
+    name = "游戏主页",
+    showBackground = true,
+    showSystemUi = true,
+    widthDp = 412,
+    heightDp = 915
+)
+@Composable
+private fun GameScreenPreview() {
+    MaterialTheme {
+        GameScreen(
+            state = GameUiState(),
+            actions = GameScreenActions.None,
+            content = GameScreenContent.GameInfo
+        )
+    }
+}
+
+@Preview(
+    name = "金手指页面",
+    showBackground = true,
+    showSystemUi = true,
+    widthDp = 412,
+    heightDp = 915
+)
+@Composable
+private fun CheatsScreenPreview() {
+    MaterialTheme {
+        GameScreen(
+            state = GameUiState(),
+            actions = GameScreenActions.None,
+            content = GameScreenContent.Cheats
+        )
+    }
+}
+
+@Preview(
+    name = "内存界面",
+    showBackground = true,
+    showSystemUi = true,
+    widthDp = 412,
+    heightDp = 915
+)
+@Composable
+private fun MemoryScreenPreview() {
+    MaterialTheme {
+        MemoryScreen(
+            state = MemoryUiState(),
+            actions = MemoryActions.None
+        )
+    }
+}
+
+@Preview(
+    name = "关于",
+    showBackground = true,
+    showSystemUi = true,
+    widthDp = 412,
+    heightDp = 915
+)
+@Composable
+private fun AboutScreenPreview() {
+    MaterialTheme {
+        AboutScreen(
+            versionName = "1.0.0",
+            onBack = {}
+        )
     }
 }

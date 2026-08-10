@@ -4,6 +4,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -32,13 +39,18 @@ data class MemoryActions(
     val enabled = state.ready && !state.parametersLocked && !state.busy
     var editing by remember { mutableStateOf<MemoryBookmark?>(null) }
     var showBookmarkEditor by remember { mutableStateOf(false) }
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.headlineSmall)
-        Text(stringResource(R.string.memory_subtitle), style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(state.address, actions.address, Modifier.fillMaxWidth().testTag("memory-address"), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_address)) })
-        TypeSelector(state.type, enabled, actions.type)
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        MemoryHeader()
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.memory_subtitle), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        OutlinedTextField(state.address, actions.address, Modifier.fillMaxWidth().testTag("memory-address"), enabled = enabled, singleLine = true, shape = RoundedCornerShape(13.dp), label = { Text(stringResource(R.string.memory_address)) })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+            Box(Modifier.weight(1f)) { TypeSelector(state.type, enabled, actions.type) }
+            OutlinedTextField(state.value, actions.value, Modifier.weight(1f).testTag("memory-value"), enabled = enabled, singleLine = true, shape = RoundedCornerShape(13.dp), label = { Text(stringResource(R.string.memory_value)) })
+        }
         if (state.type == ValueType.Hex) OutlinedTextField(state.length, actions.length, Modifier.fillMaxWidth(), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_length)) })
-        OutlinedTextField(state.value, actions.value, Modifier.fillMaxWidth().testTag("memory-value"), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_value)) })
         Row(Modifier.fillMaxWidth().testTag("memory-action-row"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(actions.read, Modifier.weight(1f).testTag("memory-read"), enabled = enabled) { Text(stringResource(R.string.memory_read)) }
             Button(actions.write, Modifier.weight(1f).testTag("memory-write"), enabled = enabled) { Text(stringResource(R.string.memory_write)) }
@@ -54,9 +66,20 @@ data class MemoryActions(
             OutlinedButton({ actions.exportBookmarks(true) }, Modifier.weight(1f), enabled = state.ready) { Text("Noexes") }
         }
         state.bookmarks.forEach { bookmark ->
-            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
-                Text(bookmark.name, style = MaterialTheme.typography.titleSmall)
-                Text(bookmark.addressExpression, style = MaterialTheme.typography.bodySmall)
+            Card(
+                Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            ) { Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("◆", color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(bookmark.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
+                        Text("${bookmark.addressExpression} · ${bookmark.valueType.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (bookmark.note.isNotBlank()) Text(bookmark.note, style = MaterialTheme.typography.bodySmall)
                 Row { TextButton({ actions.applyBookmark(bookmark) }) { Text(stringResource(R.string.memory_use_bookmark)) }
                     TextButton({ editing = bookmark; showBookmarkEditor = true }) { Text(stringResource(R.string.edit)) }
@@ -81,6 +104,20 @@ data class MemoryActions(
         text = { Text(stringResource(R.string.memory_import_count, pending.size)) },
         dismissButton = { TextButton({ actions.confirmBookmarkImport(false) }) { Text(stringResource(R.string.memory_skip_conflicts)) } },
         confirmButton = { Button({ actions.confirmBookmarkImport(true) }) { Text(stringResource(R.string.memory_overwrite_conflicts)) } }) }
+}
+
+@Composable private fun MemoryHeader() {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.size(36.dp).background(Brush.linearGradient(listOf(Color(0xFFFFC928), Color(0xFFEC9E12))), RoundedCornerShape(11.dp)),
+            contentAlignment = Alignment.Center,
+        ) { Text("◆", color = Color.White) }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("NSCheatManager", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 @Composable private fun BookmarkEditor(existing: MemoryBookmark?, address: String, type: ValueType, length: String, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {

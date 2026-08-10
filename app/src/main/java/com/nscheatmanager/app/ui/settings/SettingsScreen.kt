@@ -1,6 +1,8 @@
 package com.nscheatmanager.app.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -50,6 +52,7 @@ import com.nscheatmanager.app.data.preferences.AppPreferences
 import com.nscheatmanager.app.domain.DeviceProfile
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import androidx.compose.ui.tooling.preview.Preview
 
 data class DeviceEditorUiState(
     val id: String? = null,
@@ -107,6 +110,7 @@ fun SettingsScreen(
     }
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -154,7 +158,13 @@ fun SettingsScreen(
             }
             item { SectionHeader(stringResource(R.string.interface_section)) }
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -244,11 +254,14 @@ private fun DeviceCard(
     val defaultState = stringResource(if (device.isDefault) R.string.selected else R.string.not_selected)
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (device.isDefault) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainer
+                MaterialTheme.colorScheme.surface
             },
         ),
     ) {
@@ -319,7 +332,8 @@ private fun DeviceEditorDialog(
         Surface(
             modifier = Modifier.fillMaxWidth().sizeIn(maxHeight = 620.dp),
             shape = RoundedCornerShape(20.dp),
-            tonalElevation = 6.dp,
+            tonalElevation = 0.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Column(
                 modifier = Modifier
@@ -428,3 +442,30 @@ private val DeviceEditorError.stringResource: Int
         DeviceEditorError.DUPLICATE_HOST -> R.string.error_duplicate_host
         DeviceEditorError.SAVE_FAILED -> R.string.error_save_device
     }
+
+@Preview(
+    name = "设置界面",
+    showBackground = true,
+    showSystemUi = true,
+    widthDp = 412,
+    heightDp = 915
+)
+@Composable
+private fun SettingsScreenPreview() {
+    MaterialTheme {
+        SettingsScreen(
+            state = SettingsUiState(),
+            onBack = {},
+            onAddDevice = {},
+            onEditDevice = {},
+            onDeleteDevice = {},
+            onSetDefault = {},
+            onLanguageSelected = {},
+            onEditorChanged = {},
+            onSaveEditor = {},
+            onDismissEditor = {},
+            onShowMemoryPageChanged = {},
+            onDetachDmntBeforeConnectChanged = {}
+        )
+    }
+}
