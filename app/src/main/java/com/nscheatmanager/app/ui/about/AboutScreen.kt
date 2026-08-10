@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -61,6 +62,7 @@ fun AboutScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
+                modifier = Modifier.height(52.dp),
                 title = { Text(stringResource(R.string.about_title)) },
                 navigationIcon = {
                     TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
@@ -73,17 +75,17 @@ fun AboutScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(22.dp))
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(MaterialTheme.colorScheme.primary),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -96,7 +98,7 @@ fun AboutScreen(
                 }
                 Text(
                     stringResource(R.string.app_name),
-                    modifier = Modifier.padding(top = 10.dp),
+                    modifier = Modifier.padding(top = 6.dp),
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
@@ -106,7 +108,7 @@ fun AboutScreen(
                 )
                 Text(
                     stringResource(R.string.about_purpose),
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 5.dp),
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
@@ -142,14 +144,14 @@ fun AboutScreen(
                     },
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(13.dp))
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -181,9 +183,9 @@ fun AboutScreen(
 @Composable
 private fun AboutCard(title: String, content: @Composable () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(13.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Column(modifier = Modifier.padding(top = 6.dp), content = { content() })
+            Column(modifier = Modifier.padding(top = 4.dp), content = { content() })
         }
     }
 }

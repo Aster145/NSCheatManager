@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
@@ -22,6 +23,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nscheatmanager.app.R
 import com.nscheatmanager.app.core.model.ValueType
 
@@ -39,10 +41,10 @@ data class MemoryActions(
     val enabled = state.ready && !state.parametersLocked && !state.busy
     var editing by remember { mutableStateOf<MemoryBookmark?>(null) }
     var showBookmarkEditor by remember { mutableStateOf(false) }
-    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         MemoryHeader()
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
             Text(stringResource(R.string.memory_subtitle), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         OutlinedTextField(state.address, actions.address, Modifier.fillMaxWidth().testTag("memory-address"), enabled = enabled, singleLine = true, shape = RoundedCornerShape(13.dp), label = { Text(stringResource(R.string.memory_address)) })
@@ -66,11 +68,12 @@ data class MemoryActions(
             OutlinedButton({ actions.exportBookmarks(true) }, Modifier.weight(1f), enabled = state.ready) { Text("Noexes") }
         }
         state.bookmarks.forEach { bookmark ->
+            var bookmarkMenu by remember(bookmark.name) { mutableStateOf(false) }
             Card(
                 Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            ) { Column(Modifier.padding(12.dp)) {
+            ) { Column(Modifier.clickable { actions.applyBookmark(bookmark) }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("◆", color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(9.dp))
@@ -78,12 +81,15 @@ data class MemoryActions(
                         Text(bookmark.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Medium)
                         Text("${bookmark.addressExpression} · ${bookmark.valueType.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box {
+                        TextButton(onClick = { bookmarkMenu = true }) { Text("⋮") }
+                        DropdownMenu(bookmarkMenu, { bookmarkMenu = false }) {
+                            DropdownMenuItem({ Text(stringResource(R.string.edit)) }, { bookmarkMenu = false; editing = bookmark; showBookmarkEditor = true })
+                            DropdownMenuItem({ Text(stringResource(R.string.delete)) }, { bookmarkMenu = false; actions.deleteBookmark(bookmark.name) })
+                        }
+                    }
                 }
                 if (bookmark.note.isNotBlank()) Text(bookmark.note, style = MaterialTheme.typography.bodySmall)
-                Row { TextButton({ actions.applyBookmark(bookmark) }) { Text(stringResource(R.string.memory_use_bookmark)) }
-                    TextButton({ editing = bookmark; showBookmarkEditor = true }) { Text(stringResource(R.string.edit)) }
-                    TextButton({ actions.deleteBookmark(bookmark.name) }) { Text(stringResource(R.string.delete)) } }
             } }
         }
         if (state.pendingCleanup.isNotEmpty()) Text(stringResource(R.string.memory_pending_cleanup, state.pendingCleanup.size), color = MaterialTheme.colorScheme.error)
@@ -107,15 +113,15 @@ data class MemoryActions(
 }
 
 @Composable private fun MemoryHeader() {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(36.dp).background(Brush.linearGradient(listOf(Color(0xFFFFC928), Color(0xFFEC9E12))), RoundedCornerShape(11.dp)),
+            Modifier.size(28.dp).background(Brush.linearGradient(listOf(Color(0xFFFFC928), Color(0xFFEC9E12))), RoundedCornerShape(9.dp)),
             contentAlignment = Alignment.Center,
         ) { Text("◆", color = Color.White) }
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
         Column {
-            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("NSCheatManager", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("NSCheatManager", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

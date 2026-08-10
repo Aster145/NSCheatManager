@@ -47,7 +47,7 @@ fun CheatEditorScreen(
 ) {
     Column(
         modifier.fillMaxWidth().testTag("cheat-editor"),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         if (state.isLoading || state.isSaving) LinearProgressIndicator(Modifier.fillMaxWidth())
         TabRow(selectedTabIndex = state.selectedTab.ordinal) {
@@ -66,7 +66,7 @@ fun CheatEditorScreen(
         }
         if (state.selectedTab == EditorTab.Cheat) {
             OutlinedTextField(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp).testTag("editor-cheat-text"),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 210.dp).testTag("editor-cheat-text"),
                 value = state.cheatText,
                 onValueChange = actions.cheatChanged,
                 enabled = !state.isLoading && !state.isSaving,
@@ -75,7 +75,7 @@ fun CheatEditorScreen(
             )
         } else {
             OutlinedTextField(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp).testTag("editor-notes-text"),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 210.dp).testTag("editor-notes-text"),
                 value = state.notesText,
                 onValueChange = actions.notesChanged,
                 enabled = !state.isLoading && !state.isSaving,

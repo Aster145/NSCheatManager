@@ -9,6 +9,9 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -33,10 +36,12 @@ import kotlinx.coroutines.withContext
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 class MainActivity : AppCompatActivity() {
     companion object {
@@ -86,6 +91,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, density.fontScale.coerceAtMost(1f))) {
             NSCheatManagerTheme {
                 val state by settingsViewModel.uiState.collectAsStateWithLifecycle()
                 val gameState by gameViewModel.uiState.collectAsStateWithLifecycle()
@@ -173,7 +180,7 @@ class MainActivity : AppCompatActivity() {
                         dismissBookmarkImport = memoryViewModel::dismissBookmarkImport,
                     ),
                 )
-            }
+            } }
         }
     }
 
@@ -215,6 +222,18 @@ fun NSCheatManagerTheme(content: @Composable () -> Unit) {
             medium = RoundedCornerShape(15.dp),
             large = RoundedCornerShape(18.dp),
             extraLarge = RoundedCornerShape(22.dp),
+        ),
+        typography = Typography(
+            headlineSmall = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, lineHeight = 26.sp),
+            titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, lineHeight = 23.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            titleMedium = androidx.compose.ui.text.TextStyle(fontSize = 16.sp, lineHeight = 21.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            titleSmall = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 19.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+            bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
+            bodySmall = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, lineHeight = 16.sp),
+            labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            labelMedium = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, lineHeight = 15.sp),
+            labelSmall = androidx.compose.ui.text.TextStyle(fontSize = 10.sp, lineHeight = 14.sp),
         ),
         content = content
     )

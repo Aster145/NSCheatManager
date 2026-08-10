@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.NavigationBar
@@ -235,7 +236,7 @@ fun NSCheatManagerApp(
         bottomBar = {
             if (mainRoute && !editorState.isOpen) androidx.compose.foundation.layout.Column {
                 HorizontalDivider(color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant)
-                NavigationBar(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                NavigationBar(modifier = Modifier.height(64.dp), containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
                     visibleDestinations.forEach { destination ->
                         NavigationBarItem(
                             modifier = Modifier.testTag(destination.tag),
