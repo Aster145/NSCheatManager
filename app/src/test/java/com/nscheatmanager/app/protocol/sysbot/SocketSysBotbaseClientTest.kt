@@ -45,9 +45,9 @@ class SocketSysBotbaseClientTest {
     fun readsEachMemoryTargetWithDocumentedCommand() = runTest {
         FakeLineServer(
             responses = mapOf(
-                "peekAbsolute 0x1234 4" to "01020304\n",
-                "peekMain 0x20 2" to "A0B0\n",
-                "peek 0x30 1" to "FF\n",
+                "peekAbsolute 0x0000000000001234 4" to "01020304\n",
+                "peekMain 0x0000000000000020 2" to "A0B0\n",
+                "peek 0x00000030 1" to "FF\n",
             ),
             fragmentResponses = true,
         ).use { server ->
@@ -67,9 +67,9 @@ class SocketSysBotbaseClientTest {
             )
             assertEquals(
                 listOf(
-                    "peekAbsolute 0x1234 4",
-                    "peekMain 0x20 2",
-                    "peek 0x30 1",
+                    "peekAbsolute 0x0000000000001234 4",
+                    "peekMain 0x0000000000000020 2",
+                    "peek 0x00000030 1",
                 ),
                 server.commands,
             )
@@ -88,9 +88,9 @@ class SocketSysBotbaseClientTest {
 
             assertEquals(
                 listOf(
-                    "pokeAbsolute 0x89 0xDEAD",
-                    "pokeMain 0xAB 0x00FF",
-                    "poke 0xCD 0x12",
+                    "pokeAbsolute 0x0000000000000089 0xDEAD",
+                    "pokeMain 0x00000000000000AB 0x00FF",
+                    "poke 0x000000CD 0x12",
                 ),
                 server.commands,
             )
@@ -98,33 +98,36 @@ class SocketSysBotbaseClientTest {
     }
 
     @Test
-    fun acceptsLargestAbsoluteWriteThatFitsUpstreamCommandBuffer() = runTest {
-        FakeLineServer().use { server ->
+    fun splitsLargeReadsAndWritesInto448ByteChunksWithIncrementedAddresses() = runTest {
+        val firstRead = "AA".repeat(448)
+        val secondRead = "BB".repeat(448)
+        val thirdRead = "CC".repeat(4)
+        FakeLineServer(responses = mapOf(
+            "peekAbsolute 0x0000000000001000 448" to "$firstRead\n",
+            "peekAbsolute 0x00000000000011C0 448" to "$secondRead\n",
+            "peekAbsolute 0x0000000000001380 4" to "$thirdRead\n",
+        )).use { server ->
             val client = newClient(server)
-            val payload = ByteArray(10_990) { 0xAB.toByte() }
+            val payload = ByteArray(900) { (it and 0xFF).toByte() }
 
-            client.write(MemoryTarget.Absolute(ULong.MAX_VALUE), payload)
-            server.awaitCommandCount(1)
+            val read = client.read(MemoryTarget.Absolute(0x1000u), 900)
+            client.write(MemoryTarget.Absolute(0x2000u), payload)
+            server.awaitCommandCount(6)
 
-            val commandBytes = server.commands.single().toByteArray(Charsets.US_ASCII).size
-            val lineEndingBytes = server.lineEndings.single().toByteArray(Charsets.US_ASCII).size
-            assertEquals(22_016, commandBytes + lineEndingBytes)
+            assertEquals(900, read.size)
+            assertEquals(448, read.takeWhile { it == 0xAA.toByte() }.size)
+            assertEquals(
+                listOf(
+                    "peekAbsolute 0x0000000000001000 448",
+                    "peekAbsolute 0x00000000000011C0 448",
+                    "peekAbsolute 0x0000000000001380 4",
+                    "pokeAbsolute 0x0000000000002000 0x${payload.copyOfRange(0, 448).toHex()}",
+                    "pokeAbsolute 0x00000000000021C0 0x${payload.copyOfRange(448, 896).toHex()}",
+                    "pokeAbsolute 0x0000000000002380 0x${payload.copyOfRange(896, 900).toHex()}",
+                ),
+                server.commands,
+            )
         }
-    }
-
-    @Test
-    fun rejectsOversizeWriteBeforeConnectingOrSending() = runTest {
-        val server = FakeLineServer()
-        val client = newClient(server)
-        server.close()
-
-        val error = expectThrows<ProtocolError.CommandTooLarge> {
-            client.write(MemoryTarget.Absolute(ULong.MAX_VALUE), ByteArray(10_991))
-        }
-
-        assertEquals(22_016, error.limitBytes)
-        assertEquals(22_018L, error.actualBytes)
-        assertTrue(server.commands.isEmpty())
     }
 
     @Test
@@ -138,8 +141,8 @@ class SocketSysBotbaseClientTest {
 
             assertEquals(
                 listOf(
-                    "freeze 0x7100ABCDEF 0x78563412",
-                    "unFreeze 0x7100ABCDEF",
+                    "freeze 0x0000007100ABCDEF 0x78563412",
+                    "unFreeze 0x0000007100ABCDEF",
                 ),
                 server.commands,
             )
@@ -148,7 +151,7 @@ class SocketSysBotbaseClientTest {
 
     @Test
     fun timesOutWhenAResponseDoesNotArrive() = runTest {
-        FakeLineServer(responses = mapOf("peekMain 0x10 1" to "AA\n"), responseDelayMillis = 250)
+        FakeLineServer(responses = mapOf("peekMain 0x0000000000000010 1" to "AA\n"), responseDelayMillis = 250)
             .use { server ->
                 val client = newClient(server, readTimeoutMillis = 30)
 
@@ -157,14 +160,14 @@ class SocketSysBotbaseClientTest {
                 }
 
                 assertEquals("response", error.operation)
-                assertEquals(listOf("peekMain 0x10 1"), server.commands)
+                assertEquals(listOf("peekMain 0x0000000000000010 1"), server.commands)
             }
     }
 
     @Test
     fun readTimeoutIsATotalDeadlineForSlowDripResponses() = runTest {
         FakeLineServer(
-            responses = mapOf("peekAbsolute 0x1 2" to "AABB\n"),
+            responses = mapOf("peekAbsolute 0x0000000000000001 2" to "AABB\n"),
             fragmentResponses = true,
             fragmentDelayMillis = 20,
         ).use { server ->
@@ -178,7 +181,7 @@ class SocketSysBotbaseClientTest {
 
     @Test
     fun rejectsAResponseBeyondTheConfiguredBound() = runTest {
-        FakeLineServer(responses = mapOf("peekAbsolute 0x1 5" to "0011223344\n"))
+        FakeLineServer(responses = mapOf("peekAbsolute 0x0000000000000001 5" to "0011223344\n"))
             .use { server ->
                 val client = newClient(server, maxResponseBytes = 8)
 
@@ -192,7 +195,7 @@ class SocketSysBotbaseClientTest {
 
     @Test
     fun countsIgnoredCarriageReturnsTowardTheResponseBound() = runTest {
-        FakeLineServer(responses = mapOf("peekAbsolute 0x1 1" to "\r\r\r\r\r\r\r\r\r\n"))
+        FakeLineServer(responses = mapOf("peekAbsolute 0x0000000000000001 1" to "\r\r\r\r\r\r\r\r\r\n"))
             .use { server ->
                 val client = newClient(server, maxResponseBytes = 8)
 
@@ -204,7 +207,7 @@ class SocketSysBotbaseClientTest {
 
     @Test
     fun disconnectPreventsRequestsUntilExplicitReconnect() = runTest {
-        FakeLineServer(responses = mapOf("peek 0x4 1" to "7F\n")).use { server ->
+        FakeLineServer(responses = mapOf("peek 0x00000004 1" to "7F\n")).use { server ->
             val client = newClient(server)
             client.connect()
             client.disconnect()
@@ -221,14 +224,14 @@ class SocketSysBotbaseClientTest {
 
     @Test
     fun reportsRemoteDisconnectWhileWaitingForAResponse() = runTest {
-        FakeLineServer(closeOnCommand = "peekAbsolute 0x55 2").use { server ->
+        FakeLineServer(closeOnCommand = "peekAbsolute 0x0000000000000055 2").use { server ->
             val client = newClient(server)
 
             expectThrows<ProtocolError.Disconnected> {
                 client.read(MemoryTarget.Absolute(0x55u), 2)
             }
 
-            assertEquals(listOf("peekAbsolute 0x55 2"), server.commands)
+            assertEquals(listOf("peekAbsolute 0x0000000000000055 2"), server.commands)
         }
     }
 
@@ -236,8 +239,8 @@ class SocketSysBotbaseClientTest {
     fun concurrentCallersReceiveTheResponseForTheirOwnCommand() = runTest {
         FakeLineServer(
             responses = mapOf(
-                "peekAbsolute 0x1 1" to "11\n",
-                "peekAbsolute 0x2 1" to "22\n",
+                "peekAbsolute 0x0000000000000001 1" to "11\n",
+                "peekAbsolute 0x0000000000000002 1" to "22\n",
             ),
             fragmentResponses = true,
             responseDelayMillis = 100,
@@ -254,7 +257,7 @@ class SocketSysBotbaseClientTest {
             assertArrayEquals(byteArrayOf(0x11), results[0])
             assertArrayEquals(byteArrayOf(0x22), results[1])
             assertEquals(
-                listOf("peekAbsolute 0x1 1", "peekAbsolute 0x2 1"),
+                listOf("peekAbsolute 0x0000000000000001 1", "peekAbsolute 0x0000000000000002 1"),
                 server.commands,
             )
         }
@@ -284,3 +287,5 @@ class SocketSysBotbaseClientTest {
         error as T
     }
 }
+
+private fun ByteArray.toHex(): String = joinToString("") { "%02X".format(it.toInt() and 0xFF) }

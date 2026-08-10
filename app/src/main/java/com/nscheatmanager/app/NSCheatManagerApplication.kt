@@ -31,6 +31,8 @@ import com.nscheatmanager.app.ui.game.GameDeviceStore
 import com.nscheatmanager.app.ui.game.GameSessionGateway
 import com.nscheatmanager.app.data.files.EditorDraftStore
 import com.nscheatmanager.app.ui.GameExternalActions
+import com.nscheatmanager.app.ui.memory.MemoryBookmarkStore
+import com.nscheatmanager.app.ui.memory.RoomMemoryBookmarkStore
 
 interface MainActivityDependencies {
     val preferences: LanguagePreferenceStore
@@ -39,6 +41,7 @@ interface MainActivityDependencies {
     val gameFiles: GameFileGateway
     val editorDrafts: EditorDraftStore
     val externalActions: GameExternalActions
+    val memoryBookmarks: MemoryBookmarkStore get() = MemoryBookmarkStore.Empty
     fun createGameSession(scope: CoroutineScope): GameSessionGateway
 }
 
@@ -64,6 +67,7 @@ class AppDependencies(application: Application) : MainActivityDependencies {
     override val gameFiles: GameFileGateway = MirrorGameFileGateway(mirror, zipService, synchronization)
     override val editorDrafts = FileEditorDraftStore(File(application.cacheDir, "editor-drafts").toPath())
     override val externalActions: GameExternalActions = GameExternalActions.Platform
+    override val memoryBookmarks: MemoryBookmarkStore = RoomMemoryBookmarkStore(database.memoryBookmarkDao())
 
     override fun createGameSession(scope: CoroutineScope): DeviceSessionGateway {
         val persistence = DeviceRepositorySessionPersistence(deviceRepository)

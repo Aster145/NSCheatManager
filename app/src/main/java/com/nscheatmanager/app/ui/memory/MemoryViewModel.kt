@@ -12,6 +12,8 @@ import com.nscheatmanager.app.domain.LockedValue
 import com.nscheatmanager.app.domain.MemoryReadResult
 import com.nscheatmanager.app.protocol.sysbot.GameIdentity
 import java.util.Collections
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,10 +61,13 @@ data class MemoryUiState(
     val pendingCleanup: Set<ULong> = emptySet(),
     val error: MemoryError? = null,
     val ready: Boolean = false,
+    val bookmarks: List<MemoryBookmark> = emptyList(),
+    val pendingBookmarkImport: List<MemoryBookmark>? = null,
 ) { val parametersLocked get() = locked != null }
 
 class MemoryViewModel(
     private val gateway: MemorySessionGateway,
+    private val bookmarkStore: MemoryBookmarkStore = MemoryBookmarkStore.Empty,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     scope: CoroutineScope? = null,
 ) : ViewModel() {
@@ -74,6 +79,7 @@ class MemoryViewModel(
     private var nextClaimId = 1L
     private var activeClaim: OperationClaim? = null
     private var activeJob: kotlinx.coroutines.Job? = null
+    private var bookmarkJob: kotlinx.coroutines.Job? = null
     private val claimed = Collections.synchronizedSet(mutableSetOf<Long>())
     init { refreshSession(); workScope.launch { gateway.changes.collect { refreshSession() } } }
 
@@ -93,6 +99,10 @@ class MemoryViewModel(
             activeClaim = null
             activeJob?.cancel()
             activeJob = null
+            bookmarkJob?.cancel()
+            bookmarkJob = snapshot.operationKey?.let { key -> workScope.launch {
+                bookmarkStore.observe(key.titleId, key.buildId).collect { rows -> mutableState.update { it.copy(bookmarks = rows) } }
+            } }
         }
         mutableState.update { state ->
             state.copy(
@@ -104,16 +114,79 @@ class MemoryViewModel(
                 error = if (changed && hadTrust) MemoryError.SessionChanged else state.error,
                 busy = if (changed) false else state.busy,
                 ready = snapshot.operationKey != null,
+                bookmarks = if (snapshot.operationKey == null) emptyList() else state.bookmarks,
             )
         }
     }
+
+    fun applyBookmark(bookmark: MemoryBookmark) = change {
+        copy(address = bookmark.addressExpression, type = bookmark.valueType,
+            length = bookmark.hexLength?.toString() ?: bookmark.valueType.byteSize?.toString() ?: length)
+    }
+
+    fun saveBookmark(name: String, note: String, originalName: String? = null) {
+        val key = gateway.currentSnapshot().operationKey ?: run { fail(MemoryError.SessionRequired); return }
+        val state = mutableState.value
+        val expression = runCatching { AddressExpressionParser(state.address).parse() }.getOrElse { fail(MemoryError.InvalidAddress); return }
+        if (expression.toString().isEmpty()) return
+        val hexLength = if (state.type == ValueType.Hex) state.length.toIntOrNull() else null
+        workScope.launch {
+            runCatching { bookmarkStore.save(key.titleId, key.buildId,
+                MemoryBookmark(name.trim(), state.address.trim(), state.type, hexLength, note.trim(), clockMillis()), originalName) }
+                .onFailure { fail(MemoryError.OperationFailed) }
+        }
+    }
+
+    fun deleteBookmark(name: String) {
+        val key = gateway.currentSnapshot().operationKey ?: return
+        workScope.launch { runCatching { bookmarkStore.delete(key.titleId, key.buildId, name) }.onFailure { fail(MemoryError.OperationFailed) } }
+    }
+
+    fun exportBookmarks(noexes: Boolean): String? {
+        val key = gateway.currentSnapshot().operationKey ?: run { fail(MemoryError.SessionRequired); return null }
+        return if (noexes) MemoryBookmarkJson.exportNoexes(mutableState.value.bookmarks).first
+        else MemoryBookmarkJson.exportNative(key.titleId, key.buildId, mutableState.value.bookmarks)
+    }
+
+    fun beginBookmarkImport(json: String) {
+        val key = gateway.currentSnapshot().operationKey ?: run { fail(MemoryError.SessionRequired); return }
+        val parsed = runCatching { MemoryBookmarkJson.import(json, key.titleId, key.buildId, clockMillis()) }
+            .getOrElse { fail(MemoryError.OperationFailed); return }
+        mutableState.update { it.copy(pendingBookmarkImport = parsed) }
+    }
+
+    fun confirmBookmarkImport(overwrite: Boolean) {
+        val key = gateway.currentSnapshot().operationKey ?: return
+        val incoming = mutableState.value.pendingBookmarkImport ?: return
+        mutableState.update { it.copy(pendingBookmarkImport = null) }
+        workScope.launch {
+            incoming.forEach { bookmark ->
+                val existing = mutableState.value.bookmarks.firstOrNull { it.name.equals(bookmark.name, true) }
+                if (existing == null || overwrite) runCatching {
+                    bookmarkStore.save(key.titleId, key.buildId, bookmark, existing?.name)
+                }.onFailure { fail(MemoryError.OperationFailed) }
+            }
+        }
+    }
+
+    fun dismissBookmarkImport() = mutableState.update { it.copy(pendingBookmarkImport = null) }
 
     fun read() {
         val request = parseRequest(read = true) ?: return
         val claim = beginClaim(request.key)
         mutableState.update { it.copy(busy = true, error = null) }
         activeJob = workScope.launch {
-            runCatching { gateway.read(request.key, request.target, request.type, request.count) }
+            val address = runCatching { resolveExpression(request).also {
+                val width = request.count ?: request.type.byteSize ?: 1
+                checkedAdd(it, (width - 1).toULong())
+            } }.getOrElse {
+                if (it is CancellationException) throw it
+                publish(claim) { state -> state.copy(busy = false, error = MemoryError.InvalidAddress) }
+                return@launch
+            }
+            runCatching {
+                gateway.read(request.key, MemoryTarget.Absolute(address), request.type, request.count)
+            }
                 .onSuccess { result ->
                     publish(claim) { it.copy(busy = false, result = MemoryResultUi(result.absoluteAddress, result.bytes.copyToByteArray().toHex(), result.value, result.type, clockMillis())) }
                 }.onFailure { if (it is CancellationException) throw it; publish(claim) { s -> s.copy(busy = false, error = MemoryError.OperationFailed) } }
@@ -125,10 +198,20 @@ class MemoryViewModel(
         val bytes = runCatching { LittleEndianCodec.encode(request.type, mutableState.value.value) }
             .getOrElse { fail(MemoryError.InvalidValue); return }
         if (bytes.isEmpty() || bytes.size > 4096) { fail(MemoryError.InvalidValue); return }
-        val resolved = runCatching { resolve(request.target, gateway.currentSnapshot().identity!!, bytes.size) }
-            .getOrElse { fail(MemoryError.InvalidAddress); return }
-        val display = MemoryTargetDisplay(mutableState.value.mode, normalizedInput(), resolved)
-        mutableState.update { it.copy(confirmation = WriteConfirmation(nextId++, request.key, request.target, display, request.type, it.value, com.nscheatmanager.app.domain.ImmutableBytes.copyOf(bytes)), error = null) }
+        val claim = beginClaim(request.key)
+        mutableState.update { it.copy(busy = true, error = null) }
+        activeJob = workScope.launch {
+            runCatching { resolveExpression(request).also { checkedAdd(it, (bytes.size - 1).toULong()) } }
+                .onSuccess { resolved -> publish(claim) { state ->
+                    val target = MemoryTarget.Absolute(resolved)
+                    val display = MemoryTargetDisplay(AddressMode.Absolute, normalizedInput(), resolved)
+                    state.copy(
+                        busy = false,
+                        confirmation = WriteConfirmation(nextId++, request.key, target, display, request.type, state.value, com.nscheatmanager.app.domain.ImmutableBytes.copyOf(bytes)),
+                    )
+                } }
+                .onFailure { if (it is CancellationException) throw it; publish(claim) { state -> state.copy(busy = false, error = MemoryError.InvalidAddress) } }
+        }
     }
 
     fun dismissWrite(id: Long) = mutableState.update { if (it.confirmation?.id == id) it.copy(confirmation = null) else it }
@@ -160,7 +243,11 @@ class MemoryViewModel(
         mutableState.update { it.copy(busy = true) }
         activeJob = workScope.launch {
             if (gateway.currentSnapshot().operationKey != request.key) { fail(MemoryError.SessionChanged); return@launch }
-            runCatching { gateway.lock(request.key, request.target, request.type, bytes.copyOf()) }
+            runCatching {
+                val address = resolveExpression(request)
+                checkedAdd(address, (bytes.size - 1).toULong())
+                gateway.lock(request.key, MemoryTarget.Absolute(address), request.type, bytes.copyOf())
+            }
                 .onSuccess { locked -> refreshSession(); publish(claim) { it.copy(busy = false, locked = gateway.currentSnapshot().activeLocks[locked.absoluteAddress]) } }
                 .onFailure { if (it is CancellationException) throw it; refreshSession(); publish(claim) { s -> s.copy(busy = false, error = MemoryError.OperationFailed) } }
         }
@@ -182,20 +269,14 @@ class MemoryViewModel(
         val state = mutableState.value
         val snapshot = gateway.currentSnapshot()
         val key = snapshot.operationKey ?: run { fail(MemoryError.SessionRequired); return null }
-        if (state.mode != AddressMode.Absolute && snapshot.identity == null) { fail(MemoryError.SessionRequired); return null }
-        val raw = state.address.trim().removePrefix("0x").removePrefix("0X")
-        val address = raw.takeIf { it.isNotEmpty() && it.all(Char::isHexDigit) }?.toULongOrNull(16)
-            ?: run { fail(MemoryError.InvalidAddress); return null }
-        val target = when (state.mode) {
-            AddressMode.Absolute -> MemoryTarget.Absolute(address)
-            AddressMode.Main -> MemoryTarget.MainRelative(address)
-            AddressMode.Heap -> MemoryTarget.HeapRelative(address)
-        }
+        val identity = snapshot.identity ?: run { fail(MemoryError.SessionRequired); return null }
+        val expressionText = runCatching { legacyCompatibleExpression(state) }
+            .getOrElse { fail(MemoryError.InvalidAddress); return null }
+        val expression = runCatching { AddressExpressionParser(expressionText).parse() }
+            .getOrElse { fail(MemoryError.InvalidAddress); return null }
         val count = if (state.type == ValueType.Hex && read) state.length.toIntOrNull() else null
         if (state.type == ValueType.Hex && read && (count == null || count !in 1..4096)) { fail(MemoryError.InvalidLength); return null }
-        val width = if (read) count ?: state.type.byteSize!! else state.type.byteSize ?: 1
-        if (runCatching { resolve(target, snapshot.identity!!, width) }.isFailure) { fail(MemoryError.InvalidAddress); return null }
-        return Request(key, target, state.type, count)
+        return Request(key, expressionText, expression, identity, state.type, count)
     }
 
     private fun change(block: MemoryUiState.() -> MemoryUiState) {
@@ -208,17 +289,41 @@ class MemoryViewModel(
             activeClaim = null; activeJob = null; mutableState.update(update)
         }
     }
-    private fun normalizedInput() = mutableState.value.address.trim().removePrefix("0x").removePrefix("0X").uppercase()
+    private fun normalizedInput() = mutableState.value.address.trim().uppercase()
+    private fun legacyCompatibleExpression(state: MemoryUiState): String {
+        val raw = state.address.trim()
+        require(raw.isNotEmpty())
+        val explicitlyQualified = raw.contains('[', ignoreCase = true) ||
+            raw.contains("main", ignoreCase = true) || raw.contains("heap", ignoreCase = true)
+        return if (explicitlyQualified || state.mode == AddressMode.Absolute) raw else when (state.mode) {
+            AddressMode.Main -> "main+$raw"
+            AddressMode.Heap -> "heap+$raw"
+            AddressMode.Absolute -> raw
+        }
+    }
+    private suspend fun resolveExpression(request: Request): ULong = request.expression.resolve(request.identity) { address, size ->
+        val result = gateway.read(request.key, MemoryTarget.Absolute(address), ValueType.UInt64, null)
+        val bytes = result.bytes.copyToByteArray()
+        require(bytes.size == size)
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).long.toULong()
+    }.also { require(it != 0uL) }
     private fun resolve(target: MemoryTarget, identity: GameIdentity, width: Int): ULong = when (target) {
         is MemoryTarget.Absolute -> target.address
         is MemoryTarget.MainRelative -> checkedAdd(identity.mainBase, target.offset)
         is MemoryTarget.HeapRelative -> checkedAdd(identity.heapBase, target.offset)
     }.also { require(it != 0uL); checkedAdd(it, (width - 1).toULong()) }
     private data class OperationClaim(val id: Long, val key: GameOperationKey)
-    private data class Request(val key: GameOperationKey, val target: MemoryTarget, val type: ValueType, val count: Int?)
+    private data class Request(
+        val key: GameOperationKey,
+        val expressionText: String,
+        val expression: AddressExpression,
+        val identity: GameIdentity,
+        val type: ValueType,
+        val count: Int?,
+    )
 
-    class Factory(private val gateway: MemorySessionGateway) : ViewModelProvider.Factory {
-        @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = MemoryViewModel(gateway) as T
+    class Factory(private val gateway: MemorySessionGateway, private val bookmarks: MemoryBookmarkStore = MemoryBookmarkStore.Empty) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = MemoryViewModel(gateway, bookmarks) as T
     }
 }
 

@@ -142,7 +142,7 @@
     <string name="diagnostic_response_too_large">第 %1$d 行 · 响应超过 %2$s 字节</string>
     <string name="diagnostic_command_too_large">第 %1$d 行 · 命令字节数（实际/上限）%2$s</string>
     <string name="memory_title">内存工具</string><string name="memory_subtitle">Switch 固定小端序 · 单次最多读取 4 KiB</string>
-    <string name="memory_absolute">绝对地址</string><string name="memory_address">地址 / 偏移（十六进制）</string><string name="memory_length">读取长度（字节）</string><string name="memory_value">数值</string>
+    <string name="memory_absolute">绝对地址</string><string name="memory_address">地址表达式（绝对、main+、heap+、[指针]）</string><string name="memory_length">读取长度（字节）</string><string name="memory_value">数值</string>
     <string name="memory_read">读取</string><string name="memory_write">写入</string><string name="memory_lock">锁定</string><string name="memory_copy">复制结果</string>
     <string name="memory_confirm_title">确认写入内存</string><string name="memory_confirm_detail">目标：%1$s\n字节数：%2$d\n数据：%3$s</string>
     <string name="memory_pending_cleanup">待清理锁定：%1$d</string><string name="memory_error_session">请先连接并识别当前游戏。</string>
@@ -154,4 +154,13 @@
     <string name="error_memory_visibility_change">&#26080;&#27861;&#20445;&#23384;&#20869;&#23384;&#39029;&#38754;&#35774;&#32622;&#12290;</string>
     <string name="recognize_game_first">&#35831;&#20808;&#22312;&#28216;&#25103;&#39029;&#35782;&#21035;&#24403;&#21069;&#28216;&#25103;&#12290;</string>
     <string name="go_to_game_page">&#21069;&#24448;&#28216;&#25103;&#39029;</string>
+    <string name="memory_bookmarks">&#20070;&#31614;</string>
+    <string name="memory_add_bookmark">&#28155;&#21152;&#20070;&#31614;</string>
+    <string name="memory_edit_bookmark">&#32534;&#36753;&#20070;&#31614;</string>
+    <string name="memory_bookmark_name">&#21517;&#31216;</string>
+    <string name="memory_bookmark_note">&#22791;&#27880;&#65288;&#21487;&#36873;&#65289;</string>
+    <string name="memory_use_bookmark">&#20351;&#29992;</string>
+    <string name="memory_import_json">&#23548;&#20837; JSON</string><string name="memory_export_json">&#23548;&#20986; JSON</string>
+    <string name="memory_import_conflicts">&#21517;&#31216;&#20914;&#31361;</string><string name="memory_import_count">&#21363;&#23558;&#23548;&#20837; %1$d &#20010;&#20070;&#31614;&#65292;&#37325;&#21517;&#26102;&#22914;&#20309;&#22788;&#29702;&#65311;</string>
+    <string name="memory_skip_conflicts">&#36339;&#36807;&#37325;&#21517;</string><string name="memory_overwrite_conflicts">&#35206;&#30422;</string>
 </resources>

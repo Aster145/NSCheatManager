@@ -142,7 +142,7 @@
     <string name="diagnostic_response_too_large">Line %1$d · response exceeds %2$s bytes</string>
     <string name="diagnostic_command_too_large">Line %1$d · command bytes actual/maximum %2$s</string>
     <string name="memory_title">Memory tool</string><string name="memory_subtitle">Switch little-endian · maximum single read 4 KiB</string>
-    <string name="memory_absolute">Absolute</string><string name="memory_address">Address / offset (hex)</string><string name="memory_length">Read length (bytes)</string><string name="memory_value">Value</string>
+    <string name="memory_absolute">Absolute</string><string name="memory_address">Address expression (absolute, main+, heap+, [pointer])</string><string name="memory_length">Read length (bytes)</string><string name="memory_value">Value</string>
     <string name="memory_read">Read</string><string name="memory_write">Write</string><string name="memory_lock">Lock</string><string name="memory_copy">Copy result</string>
     <string name="memory_confirm_title">Confirm memory write</string><string name="memory_confirm_detail">Target: %1$s\nBytes: %2$d\nData: %3$s</string>
     <string name="memory_pending_cleanup">Pending lock cleanup: %1$d</string><string name="memory_error_session">Connect and recognize the current game first.</string>
@@ -154,4 +154,13 @@
     <string name="error_memory_visibility_change">Could not save the memory page setting.</string>
     <string name="recognize_game_first">Recognize the current game on the Game page first.</string>
     <string name="go_to_game_page">Go to Game</string>
+    <string name="memory_bookmarks">Bookmarks</string>
+    <string name="memory_add_bookmark">Add bookmark</string>
+    <string name="memory_edit_bookmark">Edit bookmark</string>
+    <string name="memory_bookmark_name">Name</string>
+    <string name="memory_bookmark_note">Note (optional)</string>
+    <string name="memory_use_bookmark">Use</string>
+    <string name="memory_import_json">Import JSON</string><string name="memory_export_json">Export JSON</string>
+    <string name="memory_import_conflicts">Name conflicts</string><string name="memory_import_count">Import %1$d bookmarks. How should duplicate names be handled?</string>
+    <string name="memory_skip_conflicts">Skip duplicates</string><string name="memory_overwrite_conflicts">Overwrite</string>
 </resources>

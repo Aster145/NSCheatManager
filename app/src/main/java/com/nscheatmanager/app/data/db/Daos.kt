@@ -73,3 +73,20 @@ interface CheckedCheatDao {
     @Upsert
     suspend fun upsert(checkedCheat: CheckedCheatEntity)
 }
+
+@Dao
+interface MemoryBookmarkDao {
+    @Query("SELECT * FROM memory_bookmarks WHERE titleId = :titleId AND buildId = :buildId ORDER BY modifiedAtEpochMillis DESC, name COLLATE NOCASE")
+    fun observe(titleId: String, buildId: String): Flow<List<MemoryBookmarkEntity>>
+
+    @Query("SELECT COUNT(*) FROM memory_bookmarks WHERE titleId = :titleId AND buildId = :buildId")
+    suspend fun count(titleId: String, buildId: String): Int
+
+    @Query("SELECT * FROM memory_bookmarks WHERE titleId = :titleId AND buildId = :buildId AND name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun find(titleId: String, buildId: String, name: String): MemoryBookmarkEntity?
+
+    @Upsert suspend fun upsert(bookmark: MemoryBookmarkEntity)
+
+    @Query("DELETE FROM memory_bookmarks WHERE titleId = :titleId AND buildId = :buildId AND name = :name")
+    suspend fun delete(titleId: String, buildId: String, name: String): Int
+}

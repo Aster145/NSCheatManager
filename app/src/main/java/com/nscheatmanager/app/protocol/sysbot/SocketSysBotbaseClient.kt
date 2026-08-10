@@ -12,6 +12,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -65,35 +66,50 @@ class SocketSysBotbaseClient(
         return mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
-                val response = queryLocked(readCommand(target, size))
-                parseBytes(response).also { bytes ->
-                    if (bytes.size != size) {
-                        throw ProtocolError.MalformedResponse(response)
-                    }
+                val result = ByteArray(size)
+                var copied = 0
+                while (copied < size) {
+                    val chunkSize = minOf(MAX_TRANSFER_BYTES, size - copied)
+                    val chunkTarget = target.incrementedBy(copied)
+                    val response = queryLocked(readCommand(chunkTarget, chunkSize))
+                    val bytes = parseBytes(response)
+                    if (bytes.size != chunkSize) throw ProtocolError.MalformedResponse(response)
+                    bytes.copyInto(result, copied)
+                    copied += chunkSize
+                    if (copied < size) delay(CHUNK_DELAY_MILLIS)
                 }
+                result
             }
         }
     }
 
     override suspend fun write(target: MemoryTarget, bytes: ByteArray) {
         require(bytes.isNotEmpty()) { "Write bytes must not be empty" }
-        val prefix = writePrefix(target)
-        validatePayloadSize(prefix, target.wireAddress, bytes.size)
         mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
-                sendLocked(writeCommand(prefix, target.wireAddress, bytes))
+                var copied = 0
+                while (copied < bytes.size) {
+                    val chunkSize = minOf(MAX_TRANSFER_BYTES, bytes.size - copied)
+                    val chunkTarget = target.incrementedBy(copied)
+                    val chunk = bytes.copyOfRange(copied, copied + chunkSize)
+                    val prefix = writePrefix(chunkTarget)
+                    validatePayloadSize(prefix, chunkTarget, chunk.size)
+                    sendLocked(writeCommand(prefix, chunkTarget, chunk))
+                    copied += chunkSize
+                    if (copied < bytes.size) delay(CHUNK_DELAY_MILLIS)
+                }
             }
         }
     }
 
     override suspend fun freeze(absoluteAddress: ULong, bytes: ByteArray) {
         require(bytes.isNotEmpty()) { "Freeze bytes must not be empty" }
-        validatePayloadSize("freeze", absoluteAddress, bytes.size)
+        validatePayloadSize("freeze", MemoryTarget.Absolute(absoluteAddress), bytes.size)
         mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
-                sendLocked("freeze ${formatAddress(absoluteAddress)} ${formatBytes(bytes)}")
+                sendLocked("freeze ${formatAddress(absoluteAddress, 16)} ${formatBytes(bytes)}")
             }
         }
     }
@@ -102,7 +118,7 @@ class SocketSysBotbaseClient(
         mutex.withLock {
             withContext(dispatcher) {
                 ensureConnectedLocked()
-                sendLocked("unFreeze ${formatAddress(absoluteAddress)}")
+                sendLocked("unFreeze ${formatAddress(absoluteAddress, 16)}")
             }
         }
     }
@@ -137,7 +153,7 @@ class SocketSysBotbaseClient(
             is MemoryTarget.MainRelative -> "peekMain"
             is MemoryTarget.HeapRelative -> "peek"
         }
-        return "$prefix ${formatAddress(target.wireAddress)} $size"
+        return "$prefix ${formatAddress(target)} $size"
     }
 
     private fun writePrefix(target: MemoryTarget): String = when (target) {
@@ -146,12 +162,12 @@ class SocketSysBotbaseClient(
         is MemoryTarget.HeapRelative -> "poke"
     }
 
-    private fun writeCommand(prefix: String, address: ULong, bytes: ByteArray): String =
-        "$prefix ${formatAddress(address)} ${formatBytes(bytes)}"
+    private fun writeCommand(prefix: String, target: MemoryTarget, bytes: ByteArray): String =
+        "$prefix ${formatAddress(target)} ${formatBytes(bytes)}"
 
-    private fun validatePayloadSize(prefix: String, address: ULong, payloadBytes: Int) {
+    private fun validatePayloadSize(prefix: String, target: MemoryTarget, payloadBytes: Int) {
         val fixedWireBytes =
-            prefix.length + 1 + formatAddress(address).length + 1 + HEX_PREFIX_BYTES + CRLF_BYTES
+            prefix.length + 1 + formatAddress(target).length + 1 + HEX_PREFIX_BYTES + CRLF_BYTES
         val actualWireBytes = fixedWireBytes.toLong() + payloadBytes.toLong() * HEX_CHARS_PER_BYTE
         if (actualWireBytes > MAX_COMMAND_BYTES) {
             throw ProtocolError.CommandTooLarge(MAX_COMMAND_BYTES, actualWireBytes)
@@ -244,7 +260,14 @@ class SocketSysBotbaseClient(
         }
     }
 
-    private fun formatAddress(value: ULong): String = "0x${value.toString(16).uppercase()}"
+    private fun formatAddress(target: MemoryTarget): String = when (target) {
+        is MemoryTarget.HeapRelative -> formatAddress(target.offset, 8)
+        is MemoryTarget.MainRelative -> formatAddress(target.offset, 16)
+        is MemoryTarget.Absolute -> formatAddress(target.address, 16)
+    }
+
+    private fun formatAddress(value: ULong, minimumDigits: Int): String =
+        "0x${value.toString(16).uppercase().padStart(minimumDigits, '0')}"
 
     private fun formatBytes(bytes: ByteArray): String =
         "0x${LittleEndianCodec.decode(ValueType.Hex, bytes)}"
@@ -264,10 +287,21 @@ class SocketSysBotbaseClient(
             is MemoryTarget.HeapRelative -> offset
         }
 
+    private fun MemoryTarget.incrementedBy(byteOffset: Int): MemoryTarget {
+        val increment = byteOffset.toULong()
+        return when (this) {
+            is MemoryTarget.Absolute -> MemoryTarget.Absolute(Math.addExact(address.toLong(), increment.toLong()).toULong())
+            is MemoryTarget.MainRelative -> MemoryTarget.MainRelative(Math.addExact(offset.toLong(), increment.toLong()).toULong())
+            is MemoryTarget.HeapRelative -> MemoryTarget.HeapRelative(Math.addExact(offset.toLong(), increment.toLong()).toULong())
+        }
+    }
+
     private companion object {
         const val MAX_COMMAND_BYTES = 344 * 32 * 2
         const val CRLF_BYTES = 2
         const val HEX_PREFIX_BYTES = 2
         const val HEX_CHARS_PER_BYTE = 2
+        const val MAX_TRANSFER_BYTES = 0x1C0
+        const val CHUNK_DELAY_MILLIS = 65L
     }
 }

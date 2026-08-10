@@ -79,17 +79,15 @@ class CheatFirstFlowTest {
 
     @Test
     fun detachDmntUsesSelectedDeviceAndDoesNotRequireSysbotConnection() {
+        var state by mutableStateOf(populatedState().copy(connection = ConnectionState.Disconnected, gameValidated = false))
         compose.setContent {
             GameScreen(
-                state = populatedState().copy(connection = ConnectionState.Disconnected, gameValidated = false),
+                state = state,
                 actions = GameScreenActions.None,
             )
         }
         compose.onNodeWithTag("detach-dmnt").assertIsEnabled()
-
-        compose.setContent {
-            GameScreen(state = GameUiState(), actions = GameScreenActions.None)
-        }
+        compose.runOnIdle { state = GameUiState() }
         compose.onNodeWithTag("detach-dmnt").assertIsNotEnabled()
     }
 

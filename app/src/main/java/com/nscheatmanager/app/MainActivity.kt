@@ -3,6 +3,7 @@ package com.nscheatmanager.app
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +26,7 @@ import com.nscheatmanager.app.ui.settings.SettingsViewModel
 import com.nscheatmanager.app.ui.memory.MemoryActions
 import com.nscheatmanager.app.ui.memory.MemoryViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
@@ -34,6 +36,17 @@ class MainActivity : AppCompatActivity() {
         @Volatile var dependenciesForTest: MainActivityDependencies? = null
     }
     private val dependencies get() = dependenciesForTest ?: (application as NSCheatManagerApplication).dependencies
+    private var pendingBookmarkExport: String? = null
+    private val exportBookmarks = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        val text = pendingBookmarkExport.also { pendingBookmarkExport = null } ?: return@registerForActivityResult
+        if (uri != null) lifecycleScope.launch(Dispatchers.IO) { contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(text) } }
+    }
+    private val importBookmarks = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) lifecycleScope.launch(Dispatchers.IO) {
+            val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText().take(2_000_001) }
+            if (text != null && text.length <= 2_000_000) withContext(Dispatchers.Main) { memoryViewModel.beginBookmarkImport(text) }
+        }
+    }
     private val settingsViewModel by viewModels<SettingsViewModel> {
         SettingsViewModel.Factory(dependencies.devices, dependencies.preferences, ::applyLocale)
     }
@@ -47,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             dependencies.editorDrafts,
         )
     }
-    private val memoryViewModel by viewModels<MemoryViewModel> { MemoryViewModel.Factory(gameViewModel) }
+    private val memoryViewModel by viewModels<MemoryViewModel> { MemoryViewModel.Factory(gameViewModel, dependencies.memoryBookmarks) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,6 +155,14 @@ class MainActivity : AppCompatActivity() {
                         length = memoryViewModel::updateLength, read = memoryViewModel::read,
                         write = memoryViewModel::requestWrite, lock = memoryViewModel::toggleLock,
                         confirm = memoryViewModel::confirmWrite, dismiss = memoryViewModel::dismissWrite,
+                        applyBookmark = memoryViewModel::applyBookmark, saveBookmark = memoryViewModel::saveBookmark,
+                        deleteBookmark = memoryViewModel::deleteBookmark,
+                        importBookmarks = { importBookmarks.launch(arrayOf("application/json", "text/plain")) },
+                        exportBookmarks = { noexes -> memoryViewModel.exportBookmarks(noexes)?.let {
+                            pendingBookmarkExport = it; exportBookmarks.launch(if (noexes) "NSCheatManager-noexes-bookmarks.json" else "NSCheatManager-bookmarks.json")
+                        } },
+                        confirmBookmarkImport = memoryViewModel::confirmBookmarkImport,
+                        dismissBookmarkImport = memoryViewModel::dismissBookmarkImport,
                     ),
                 )
             }

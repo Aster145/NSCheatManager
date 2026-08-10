@@ -22,20 +22,19 @@ data class MemoryActions(
     val mode: (AddressMode) -> Unit, val address: (String) -> Unit, val type: (ValueType) -> Unit,
     val value: (String) -> Unit, val length: (String) -> Unit, val read: () -> Unit,
     val write: () -> Unit, val lock: (Boolean) -> Unit, val confirm: (Long) -> Unit, val dismiss: (Long) -> Unit,
+    val applyBookmark: (MemoryBookmark) -> Unit = {}, val saveBookmark: (String, String, String?) -> Unit = { _, _, _ -> },
+    val deleteBookmark: (String) -> Unit = {},
+    val importBookmarks: () -> Unit = {}, val exportBookmarks: (Boolean) -> Unit = {},
+    val confirmBookmarkImport: (Boolean) -> Unit = {}, val dismissBookmarkImport: () -> Unit = {},
 ) { companion object { val None = MemoryActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}) } }
 
 @Composable fun MemoryScreen(state: MemoryUiState, actions: MemoryActions, modifier: Modifier = Modifier) {
     val enabled = state.ready && !state.parametersLocked && !state.busy
+    var editing by remember { mutableStateOf<MemoryBookmark?>(null) }
+    var showBookmarkEditor by remember { mutableStateOf(false) }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.memory_title), style = MaterialTheme.typography.headlineSmall)
         Text(stringResource(R.string.memory_subtitle), style = MaterialTheme.typography.bodySmall)
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            AddressMode.entries.forEachIndexed { index, mode ->
-                SegmentedButton(selected = state.mode == mode, onClick = { actions.mode(mode) }, enabled = enabled,
-                    shape = SegmentedButtonDefaults.itemShape(index, AddressMode.entries.size),
-                    label = { Text(when(mode) { AddressMode.Absolute -> stringResource(R.string.memory_absolute); AddressMode.Main -> "Main +"; AddressMode.Heap -> "Heap +" }) })
-            }
-        }
         OutlinedTextField(state.address, actions.address, Modifier.fillMaxWidth().testTag("memory-address"), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_address)) })
         TypeSelector(state.type, enabled, actions.type)
         if (state.type == ValueType.Hex) OutlinedTextField(state.length, actions.length, Modifier.fillMaxWidth(), enabled = enabled, singleLine = true, label = { Text(stringResource(R.string.memory_length)) })
@@ -49,6 +48,25 @@ data class MemoryActions(
             }
         }
         state.result?.let { ResultCard(it) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(stringResource(R.string.memory_bookmarks), style = MaterialTheme.typography.titleMedium)
+            TextButton({ editing = null; showBookmarkEditor = true }, enabled = state.ready) { Text(stringResource(R.string.memory_add_bookmark)) }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(actions.importBookmarks, Modifier.weight(1f), enabled = state.ready) { Text(stringResource(R.string.memory_import_json)) }
+            OutlinedButton({ actions.exportBookmarks(false) }, Modifier.weight(1f), enabled = state.ready) { Text(stringResource(R.string.memory_export_json)) }
+            OutlinedButton({ actions.exportBookmarks(true) }, Modifier.weight(1f), enabled = state.ready) { Text("Noexes") }
+        }
+        state.bookmarks.forEach { bookmark ->
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(12.dp)) {
+                Text(bookmark.name, style = MaterialTheme.typography.titleSmall)
+                Text(bookmark.addressExpression, style = MaterialTheme.typography.bodySmall)
+                if (bookmark.note.isNotBlank()) Text(bookmark.note, style = MaterialTheme.typography.bodySmall)
+                Row { TextButton({ actions.applyBookmark(bookmark) }) { Text(stringResource(R.string.memory_use_bookmark)) }
+                    TextButton({ editing = bookmark; showBookmarkEditor = true }) { Text(stringResource(R.string.edit)) }
+                    TextButton({ actions.deleteBookmark(bookmark.name) }) { Text(stringResource(R.string.delete)) } }
+            } }
+        }
         if (state.pendingCleanup.isNotEmpty()) Text(stringResource(R.string.memory_pending_cleanup, state.pendingCleanup.size), color = MaterialTheme.colorScheme.error)
         state.error?.let { Text(stringResource(it.resource()), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("memory-error")) }
     }
@@ -58,6 +76,27 @@ data class MemoryActions(
             dismissButton = { TextButton({ actions.dismiss(pending.id) }) { Text(stringResource(R.string.cancel)) } },
             confirmButton = { Button({ actions.confirm(pending.id) }, Modifier.testTag("memory-confirm")) { Text(stringResource(R.string.confirm)) } })
     }
+    if (showBookmarkEditor) BookmarkEditor(editing, state.address, state.type, state.length,
+        onDismiss = { showBookmarkEditor = false }, onSave = { name, note ->
+            actions.saveBookmark(name, note, editing?.name); showBookmarkEditor = false
+        })
+    state.pendingBookmarkImport?.let { pending -> AlertDialog(onDismissRequest = actions.dismissBookmarkImport,
+        title = { Text(stringResource(R.string.memory_import_conflicts)) },
+        text = { Text(stringResource(R.string.memory_import_count, pending.size)) },
+        dismissButton = { TextButton({ actions.confirmBookmarkImport(false) }) { Text(stringResource(R.string.memory_skip_conflicts)) } },
+        confirmButton = { Button({ actions.confirmBookmarkImport(true) }) { Text(stringResource(R.string.memory_overwrite_conflicts)) } }) }
+}
+
+@Composable private fun BookmarkEditor(existing: MemoryBookmark?, address: String, type: ValueType, length: String, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+    var name by remember(existing) { mutableStateOf(existing?.name.orEmpty()) }
+    var note by remember(existing) { mutableStateOf(existing?.note.orEmpty()) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(if (existing == null) R.string.memory_add_bookmark else R.string.memory_edit_bookmark)) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.memory_bookmark_name)) }, singleLine = true)
+            Text(existing?.addressExpression ?: address); Text((existing?.valueType ?: type).name + if ((existing?.valueType ?: type) == ValueType.Hex) " × ${existing?.hexLength ?: length}" else "")
+            OutlinedTextField(note, { note = it }, label = { Text(stringResource(R.string.memory_bookmark_note)) })
+        } }, dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.cancel)) } },
+        confirmButton = { Button({ onSave(name, note) }, enabled = name.isNotBlank() && address.isNotBlank()) { Text(stringResource(R.string.save)) } })
 }
 
 @Composable private fun TypeSelector(selected: ValueType, enabled: Boolean, select: (ValueType) -> Unit) {

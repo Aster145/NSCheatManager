@@ -73,3 +73,19 @@ data class CheckedCheatEntity(
     val isChecked: Boolean,
     val lastExecutedAtEpochMillis: Long?,
 )
+
+@Entity(
+    tableName = "memory_bookmarks",
+    primaryKeys = ["titleId", "buildId", "name"],
+    indices = [Index(value = ["titleId", "buildId", "modifiedAtEpochMillis"])],
+)
+data class MemoryBookmarkEntity(
+    val titleId: String,
+    val buildId: String,
+    val name: String,
+    val addressExpression: String,
+    val valueType: String,
+    val hexLength: Int?,
+    val note: String,
+    val modifiedAtEpochMillis: Long,
+)

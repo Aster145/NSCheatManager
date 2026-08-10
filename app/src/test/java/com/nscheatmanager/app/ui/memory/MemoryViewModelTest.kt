@@ -38,7 +38,7 @@ class MemoryViewModelTest {
         val gateway = FakeMemoryGateway()
         val vm = MemoryViewModel(gateway, scope = backgroundScope, clockMillis = { 123 })
         vm.updateAddress("10"); vm.updateValue("42"); vm.selectType(ValueType.Int32)
-        vm.requestWrite(); val pending = requireNotNull(vm.uiState.value.confirmation)
+        vm.requestWrite(); runCurrent(); val pending = requireNotNull(vm.uiState.value.confirmation)
         vm.updateValue("99")
         vm.confirmWrite(pending.id); vm.confirmWrite(pending.id); runCurrent()
         assertEquals(1, gateway.writes.size)
@@ -70,7 +70,7 @@ class MemoryViewModelTest {
     @Test fun sessionSwitchInvalidatesPendingConfirmationAndTrustedResult() = runTest(dispatcher) {
         val gateway = FakeMemoryGateway()
         val vm = MemoryViewModel(gateway, scope = backgroundScope)
-        vm.updateAddress("10"); vm.updateValue("42"); vm.requestWrite()
+        vm.updateAddress("10"); vm.updateValue("42"); vm.requestWrite(); runCurrent()
         assertNotNull(vm.uiState.value.confirmation)
         gateway.key = key.copy(generation = 2)
         vm.refreshSession()
@@ -81,7 +81,7 @@ class MemoryViewModelTest {
     @Test fun confirmationOwnsBytesAndExposesOnlyCopies() = runTest(dispatcher) {
         val gateway = FakeMemoryGateway()
         val vm = MemoryViewModel(gateway, scope = backgroundScope)
-        vm.updateAddress("10"); vm.updateValue("2A 00"); vm.selectType(ValueType.Hex); vm.requestWrite()
+        vm.updateAddress("10"); vm.updateValue("2A 00"); vm.selectType(ValueType.Hex); vm.requestWrite(); runCurrent()
         val pending = requireNotNull(vm.uiState.value.confirmation)
         val exposed = pending.bytes.copyToByteArray().also { it[0] = 0 }
         vm.confirmWrite(pending.id); runCurrent()
@@ -112,7 +112,7 @@ class MemoryViewModelTest {
                 assertEquals(size * 2, vm.uiState.value.result!!.value.length)
             }
         }
-        assertEquals(listOf(MemoryTarget.Absolute(1u), MemoryTarget.MainRelative(1u), MemoryTarget.HeapRelative(1u)), gateway.reads.map { it.second }.distinct())
+        assertEquals(listOf(MemoryTarget.Absolute(1u), MemoryTarget.Absolute(0x1001u), MemoryTarget.Absolute(0x2001u)), gateway.reads.map { it.second }.distinct())
     }
 
     @Test fun everyValueTypeBuildsExactLittleEndianConfirmationIncludingIeeeSpecials() = runTest(dispatcher) {
@@ -120,14 +120,14 @@ class MemoryViewModelTest {
             ValueType.Int32 to "-3", ValueType.UInt32 to "4294967295", ValueType.Int64 to "-4", ValueType.UInt64 to "18446744073709551615",
             ValueType.Float to "-0.0", ValueType.Double to "Infinity", ValueType.Hex to "AA")
         val vm = MemoryViewModel(FakeMemoryGateway(), scope = backgroundScope); vm.updateAddress("10")
-        cases.forEach { (type, value) -> vm.selectType(type); vm.updateValue(value); vm.requestWrite(); val bytes = requireNotNull(vm.uiState.value.confirmation).bytes.copyToByteArray(); assertEquals(type.byteSize ?: 1, bytes.size); vm.dismissWrite(vm.uiState.value.confirmation!!.id) }
-        vm.selectType(ValueType.Float); vm.updateValue("NaN"); vm.requestWrite(); assertTrue(java.lang.Float.intBitsToFloat(java.nio.ByteBuffer.wrap(vm.uiState.value.confirmation!!.bytes.copyToByteArray()).order(java.nio.ByteOrder.LITTLE_ENDIAN).int).isNaN())
+        cases.forEach { (type, value) -> vm.selectType(type); vm.updateValue(value); vm.requestWrite(); runCurrent(); val bytes = requireNotNull(vm.uiState.value.confirmation).bytes.copyToByteArray(); assertEquals(type.byteSize ?: 1, bytes.size); vm.dismissWrite(vm.uiState.value.confirmation!!.id) }
+        vm.selectType(ValueType.Float); vm.updateValue("NaN"); vm.requestWrite(); runCurrent(); assertTrue(java.lang.Float.intBitsToFloat(java.nio.ByteBuffer.wrap(vm.uiState.value.confirmation!!.bytes.copyToByteArray()).order(java.nio.ByteOrder.LITTLE_ENDIAN).int).isNaN())
     }
 
     @Test fun zeroAndUnsignedSpanOverflowAreRejectedBeforeIo() = runTest(dispatcher) {
         val gateway = FakeMemoryGateway(); val vm = MemoryViewModel(gateway, scope = backgroundScope)
-        vm.updateAddress("0"); vm.read(); assertEquals(MemoryError.InvalidAddress, vm.uiState.value.error)
-        vm.updateAddress("FFFFFFFFFFFFFFFF"); vm.selectType(ValueType.UInt64); vm.read()
+        vm.updateAddress("0"); vm.read(); runCurrent(); assertEquals(MemoryError.InvalidAddress, vm.uiState.value.error)
+        vm.updateAddress("FFFFFFFFFFFFFFFF"); vm.selectType(ValueType.UInt64); vm.read(); runCurrent()
         assertEquals(MemoryError.InvalidAddress, vm.uiState.value.error); assertTrue(gateway.reads.isEmpty())
     }
 
@@ -157,8 +157,8 @@ class MemoryViewModelTest {
     @Test fun lateWriteLockAndUnlockCannotAffectNewSessionOrAuthoritativeLock() = runTest(dispatcher) {
         val gateway = FakeMemoryGateway(); val vm = MemoryViewModel(gateway, scope = backgroundScope)
         val oldWrite = ManualBarrier<Unit>(); gateway.writeBarrier = oldWrite
-        vm.updateAddress("10"); vm.updateValue("1"); vm.requestWrite(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
-        gateway.switchTo(2); vm.refreshSession(); vm.updateValue("2"); vm.requestWrite(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
+        vm.updateAddress("10"); vm.updateValue("1"); vm.requestWrite(); runCurrent(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
+        gateway.switchTo(2); vm.refreshSession(); vm.updateValue("2"); vm.requestWrite(); runCurrent(); vm.confirmWrite(vm.uiState.value.confirmation!!.id); runCurrent()
         oldWrite.fail(IllegalStateException("late write")); runCurrent(); assertFalse(vm.uiState.value.busy); assertNull(vm.uiState.value.error)
         val oldLock = ManualBarrier<LockedValue>(); gateway.lockBarrier = oldLock
         vm.toggleLock(true); runCurrent(); gateway.switchTo(3); vm.refreshSession(); vm.updateAddress("30"); vm.updateValue("3"); vm.toggleLock(true); runCurrent()
