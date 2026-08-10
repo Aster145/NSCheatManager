@@ -129,9 +129,11 @@ fun GameScreen(
                             ), contentAlignment = Alignment.Center,
                         ) { Text("◆", color = Color.White, fontSize = 13.sp) }
                         Spacer(Modifier.width(8.dp))
-                        Column {
+                        if (content == GameScreenContent.GameInfo) {
+                            Text("NSCheatManager", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                        } else Column {
                             Text(
-                                stringResource(if (content == GameScreenContent.Cheats) R.string.nav_cheats else R.string.current_game),
+                                stringResource(R.string.nav_cheats),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
                             )
@@ -437,23 +439,14 @@ private fun IdentityBlock(label: String, value: String?, modifier: Modifier = Mo
 @Composable
 private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
     var detailGroup by remember { mutableStateOf<CheatGroupUiState?>(null) }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    if (!state.missingMirror) {
         Text(
-            stringResource(R.string.nav_cheats),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Medium,
+            stringResource(R.string.available_cheats_count, state.groups.size),
+            modifier = Modifier.fillMaxWidth().padding(end = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
         )
-        if (!state.missingMirror) {
-            Text(
-                stringResource(R.string.available_cheats_count, state.groups.size),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
     if (state.missingMirror) {
         Card(Modifier.fillMaxWidth().testTag("missing-cheat-file")) {
@@ -502,11 +495,11 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
                     role = Role.Checkbox,
                     onValueChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
                 )
-                .heightIn(min = 44.dp),
+                .heightIn(min = 28.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Checkbox(
-                modifier = Modifier.clearAndSetSemantics { },
+                modifier = Modifier.size(30.dp).clearAndSetSemantics { },
                 checked = group.checked,
                 enabled = group.executable && !group.executing,
                 onCheckedChange = null,
