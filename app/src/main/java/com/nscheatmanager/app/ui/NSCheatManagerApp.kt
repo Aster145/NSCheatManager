@@ -245,11 +245,9 @@ fun NSCheatManagerApp(
                             icon = { Icon(destination.icon, contentDescription = null) },
                             label = { Text(stringResource(destination.label)) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                selectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-                                indicatorColor = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer,
-                                unselectedIconColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                                unselectedTextColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                                selectedIconColor = Color(0xFF654695), selectedTextColor = Color(0xFF654695),
+                                indicatorColor = Color(0xFFEFE6F7),
+                                unselectedIconColor = Color(0xFF716978), unselectedTextColor = Color(0xFF716978),
                             ),
                         )
                     }
