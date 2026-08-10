@@ -30,13 +30,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.withContext
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.Shapes
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.unit.dp
 
 class MainActivity : AppCompatActivity() {
     companion object {
@@ -191,31 +184,5 @@ class MainActivity : AppCompatActivity() {
 
 @Composable
 fun NSCheatManagerTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) darkColorScheme(
-            primary = Color(0xFF8D66BD), onPrimary = Color.White,
-            primaryContainer = Color(0xFF3D2C50), onPrimaryContainer = Color(0xFFF5EFFC),
-            secondary = Color(0xFFC7B1DC), onSecondary = Color(0xFF261B31),
-            background = Color(0xFF17131D), onBackground = Color(0xFFF5EFFC),
-            surface = Color(0xFF211B28), onSurface = Color(0xFFF5EFFC),
-            surfaceVariant = Color(0xFF241D2A), onSurfaceVariant = Color(0xFFB8AFC0),
-            outline = Color(0xFF554A5D), outlineVariant = Color(0xFF3A303F),
-        ) else lightColorScheme(
-            primary = Color(0xFF6F4CA3), onPrimary = Color.White,
-            primaryContainer = Color(0xFFEFE6F7), onPrimaryContainer = Color(0xFF4C326C),
-            secondary = Color(0xFF76509B), onSecondary = Color.White,
-            background = Color(0xFFFBF8FD), onBackground = Color(0xFF231F2B),
-            surface = Color.White, onSurface = Color(0xFF231F2B),
-            surfaceVariant = Color(0xFFF2EDF5), onSurfaceVariant = Color(0xFF756D7E),
-            outline = Color(0xFFDED5E4), outlineVariant = Color(0xFFE6DEEB),
-        ),
-        shapes = Shapes(
-            extraSmall = RoundedCornerShape(9.dp),
-            small = RoundedCornerShape(12.dp),
-            medium = RoundedCornerShape(15.dp),
-            large = RoundedCornerShape(18.dp),
-            extraLarge = RoundedCornerShape(22.dp),
-        ),
-        content = content
-    )
+    MaterialTheme(content = content)
 }

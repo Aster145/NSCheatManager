@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -34,8 +32,6 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.navigation.compose.NavHost
@@ -230,26 +226,17 @@ fun NSCheatManagerApp(
     }
 
     Scaffold(
-        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbar, Modifier.testTag("app-snackbar")) },
         bottomBar = {
-            if (mainRoute && !editorState.isOpen) androidx.compose.foundation.layout.Column {
-                HorizontalDivider(color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant)
-                NavigationBar(containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-                    visibleDestinations.forEach { destination ->
-                        NavigationBarItem(
-                            modifier = Modifier.testTag(destination.tag),
-                            selected = route == destination.route,
-                            onClick = { requestNavigation(destination.route) },
-                            icon = { Icon(destination.icon, contentDescription = null) },
-                            label = { Text(stringResource(destination.label)) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color(0xFF654695), selectedTextColor = Color(0xFF654695),
-                                indicatorColor = Color(0xFFEFE6F7),
-                                unselectedIconColor = Color(0xFF716978), unselectedTextColor = Color(0xFF716978),
-                            ),
-                        )
-                    }
+            if (mainRoute && !editorState.isOpen) NavigationBar {
+                visibleDestinations.forEach { destination ->
+                    NavigationBarItem(
+                        modifier = Modifier.testTag(destination.tag),
+                        selected = route == destination.route,
+                        onClick = { requestNavigation(destination.route) },
+                        icon = { Icon(destination.icon, contentDescription = null) },
+                        label = { Text(stringResource(destination.label)) },
+                    )
                 }
             }
         },
