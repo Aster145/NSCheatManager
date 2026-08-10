@@ -149,15 +149,15 @@ fun GameScreen(
                     ) { Text("⋮") }
                     DropdownMenu(
                         expanded = menuExpanded, onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.width(180.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
-                        shape = RoundedCornerShape(14.dp), containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp,
+                        modifier = Modifier.width(210.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp,
                     ) {
                         ToggleOrderedMenuItem(0, "menu-edit", true, state.editMode || editorState.isOpen, text = {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                            Checkbox(modifier = Modifier.size(28.dp).clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
-                            Spacer(Modifier.width(6.dp))
+                            Checkbox(modifier = Modifier.clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.edit_mode))
                             }
                         }) {
@@ -234,10 +234,7 @@ private fun OrderedMenuItem(
     onClick: () -> Unit,
 ) {
     Box(Modifier.testTag("menu-order-$order")) {
-        DropdownMenuItem(
-            modifier = Modifier.height(40.dp).testTag(tag), text = text, onClick = onClick, enabled = enabled,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-        )
+        DropdownMenuItem(modifier = Modifier.testTag(tag), text = text, onClick = onClick, enabled = enabled)
     }
 }
 
@@ -252,14 +249,13 @@ private fun ToggleOrderedMenuItem(
 ) {
     Box(Modifier.testTag("menu-order-$order")) {
         DropdownMenuItem(
-            modifier = Modifier.height(40.dp).testTag(tag).semantics {
+            modifier = Modifier.testTag(tag).semantics {
                 role = Role.Checkbox
                 toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
             },
             text = text,
             onClick = onClick,
             enabled = enabled,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
         )
     }
 }
@@ -316,12 +312,19 @@ private fun DeviceSelector(
                     selected?.name ?: stringResource(if (devices.isEmpty()) R.string.add_device_first else R.string.select_device),
                     style = MaterialTheme.typography.labelLarge,
                 )
+                selected?.let {
+                    Text(
+                        it.host,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             devices.forEach { device ->
                 DropdownMenuItem(
-                    text = { Text(device.name) },
+                    text = { Text("${device.name} · ${device.host}") },
                     onClick = { expanded = false; onSelect(device.id) },
                 )
             }
