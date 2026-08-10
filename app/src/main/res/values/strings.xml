@@ -163,16 +163,4 @@
     <string name="memory_import_json">Import JSON</string><string name="memory_export_json">Export JSON</string>
     <string name="memory_import_conflicts">Name conflicts</string><string name="memory_import_count">Import %1$d bookmarks. How should duplicate names be handled?</string>
     <string name="memory_skip_conflicts">Skip duplicates</string><string name="memory_overwrite_conflicts">Overwrite</string>
-    <string name="detach_before_connect">Detach dmnt before connecting</string>
-    <string name="detach_before_connect_summary">When Connect is tapped, request dmnt detach through Noexs 7331 before connecting to sys-botbase.</string>
-    <string name="error_auto_detach_change">Could not save the automatic dmnt detach setting.</string>
-    <string name="connection_summary_detached_connected">dmnt detached · Switch connected</string>
-    <string name="connection_summary_detach_failed_connected">dmnt detach failed · Switch connected</string>
-    <string name="connection_summary_detached_connect_failed">dmnt detached · Switch connection failed</string>
-    <string name="connection_summary_both_failed">dmnt detach failed · Switch connection failed</string>
-    <string name="connection_summary_connected">Switch connected</string>
-    <string name="connection_summary_connect_failed">Switch connection failed</string>
-    <string name="connection_summary_detach_failed">dmnt detach failed</string>
-    <string name="connection_cancelled">Connection cancelled</string>
-    <string name="add_device_first">Add a device in Settings first</string>
 </resources>

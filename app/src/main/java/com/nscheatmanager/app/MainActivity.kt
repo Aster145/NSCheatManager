@@ -93,7 +93,6 @@ class MainActivity : AppCompatActivity() {
                         setDefault = settingsViewModel::setDefaultDevice,
                         selectLanguage = settingsViewModel::selectLanguage,
                         showMemoryPage = settingsViewModel::setShowMemoryPage,
-                        detachDmntBeforeConnect = settingsViewModel::setDetachDmntBeforeConnect,
                         editorChanged = settingsViewModel::updateEditor,
                         saveEditor = settingsViewModel::saveEditor,
                         dismissEditor = settingsViewModel::dismissEditor,
@@ -103,7 +102,7 @@ class MainActivity : AppCompatActivity() {
                     gameState = gameState,
                     gameActions = GameScreenActions(
                         selectDevice = gameViewModel::onDeviceSelected,
-                        connectionToggle = { gameViewModel.onConnectionToggle(state.detachDmntBeforeConnect) },
+                        connectionToggle = gameViewModel::onConnectionToggle,
                         detachDmnt = gameViewModel::onDetachDmntRequested,
                         cheatChecked = gameViewModel::onCheatChecked,
                         editModeChanged = { enabled ->

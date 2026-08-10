@@ -21,9 +21,6 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeLeft
-import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -76,25 +73,6 @@ class FullFlowTest {
             .assertIsDisplayed()
     }
 
-    @Test fun startsOnGameAndVisibleTabsSwipeWithoutWrapping() {
-        compose.setContent {
-            NSCheatManagerApp(
-                settingsState = com.nscheatmanager.app.ui.settings.SettingsUiState(showMemoryPage = true),
-                settingsActions = SettingsActions.None,
-                versionName = "1",
-            )
-        }
-        compose.onNodeWithTag("game-screen").assertIsDisplayed()
-        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeLeft() }
-        compose.waitForIdle(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
-        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeLeft() }
-        compose.waitForIdle(); compose.onNodeWithTag("memory-screen").assertIsDisplayed()
-        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeLeft() }
-        compose.waitForIdle(); compose.onNodeWithTag("memory-screen").assertIsDisplayed()
-        compose.onNodeWithTag("main-swipe-area").performTouchInput { swipeRight() }
-        compose.waitForIdle(); compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
-    }
-
     @Test fun interactiveControlSemanticsInventoryIsComplete() {
         val group = com.nscheatmanager.app.ui.game.CheatGroupUiState("Inventory cheat")
         val device = com.nscheatmanager.app.domain.DeviceProfile("inventory", "Inventory Switch", "192.168.1.41", isDefault = true)
@@ -120,7 +98,10 @@ class FullFlowTest {
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.ToggleableState, ToggleableState.Off))
 
         compose.runOnIdle { phase = 1 }
-        compose.onNodeWithTag("memory-lock").assertDoesNotExist()
+        compose.onNodeWithTag("memory-lock")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+            .assertIsOff().assertIsEnabled()
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text))
 
         compose.runOnIdle { phase = 2 }
         compose.onNodeWithTag("default-inventory")
@@ -229,10 +210,8 @@ class FullFlowTest {
             override val preferences = object : com.nscheatmanager.app.ui.settings.LanguagePreferenceStore {
                 override val languageTag = kotlinx.coroutines.flow.MutableStateFlow("en")
                 override val showMemoryPage = kotlinx.coroutines.flow.MutableStateFlow(true)
-                override val detachDmntBeforeConnect = kotlinx.coroutines.flow.MutableStateFlow(true)
                 override suspend fun setLanguageTag(languageTag: String) { this.languageTag.value = languageTag }
                 override suspend fun setShowMemoryPage(show: Boolean) { showMemoryPage.value = show }
-                override suspend fun setDetachDmntBeforeConnect(enabled: Boolean) { detachDmntBeforeConnect.value = enabled }
             }
             override fun createGameSession(scope: kotlinx.coroutines.CoroutineScope) = session
             override val gameFiles = files
@@ -245,7 +224,7 @@ class FullFlowTest {
         }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                compose.onNodeWithTag("game-screen").assertIsDisplayed()
+                compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
                 compose.onNodeWithTag("nav-memory").performClick()
                 compose.onNodeWithTag("memory-screen").assertIsDisplayed()
                 compose.onNodeWithTag("memory-address").performTextInput("20")
@@ -253,7 +232,8 @@ class FullFlowTest {
                 compose.onNodeWithTag("memory-write").performClick()
                 compose.onNodeWithTag("memory-confirm").performClick()
                 compose.waitUntil(5_000) { session.writeCount == 1 }
-                compose.onNodeWithTag("memory-lock").assertDoesNotExist()
+                compose.onNodeWithTag("memory-lock").performClick()
+                compose.waitUntil(5_000) { session.lockCount == 1 }
                 compose.onNodeWithTag("nav-game").performClick()
                 fun openMenu(tag: String) { compose.onNodeWithTag("overflow-menu").performClick(); compose.onNodeWithTag(tag).performClick() }
                 openMenu("menu-upload")
@@ -277,7 +257,7 @@ class FullFlowTest {
                 compose.onNodeWithTag("game-screen").assertIsDisplayed()
             }
             compose.runOnIdle {
-                check(session.writeCount == 1 && session.lockCount == 0 && session.closeCount == 1)
+                check(session.writeCount == 1 && session.lockCount == 1 && session.closeCount == 1)
                 check(files.stagedUploadCount == 1 && files.directUploadCount == 1 && files.importCount == 1)
                 check(external.openZipCount == 1 && external.shareCount == 1)
             }

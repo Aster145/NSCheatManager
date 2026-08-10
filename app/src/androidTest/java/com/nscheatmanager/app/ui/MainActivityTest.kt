@@ -39,8 +39,8 @@ class MainActivityTest {
     }
 
     @Test
-    fun realCompositionRootStartsOnGameAndOpensSettings() {
-        compose.onNodeWithTag("game-screen").assertIsDisplayed()
+    fun realCompositionRootStartsOnCheatsAndOpensSettings() {
+        compose.onNodeWithTag("cheats-screen").assertIsDisplayed()
         compose.onNodeWithTag("overflow-menu").performClick()
         compose.onNodeWithTag("menu-settings").performClick()
         compose.onNodeWithTag("settings-content").assertIsDisplayed()

@@ -180,15 +180,6 @@ class AppDatabaseTest {
     }
 
     @Test
-    fun automaticDmntDetachIsEnabledByDefaultAndPreferencePersists() = runBlocking {
-        assertTrue(preferences.detachDmntBeforeConnect.first())
-        preferences.setDetachDmntBeforeConnect(false)
-        assertFalse(preferences.detachDmntBeforeConnect.first())
-        preferences.setDetachDmntBeforeConnect(true)
-        assertTrue(preferences.detachDmntBeforeConnect.first())
-    }
-
-    @Test
     fun validatedSessionIsTrustedOnlyByTheRepositoryThatRecognizedIt() = runBlocking {
         val databaseName = "restart-${UUID.randomUUID()}.db"
         var firstDatabase: AppDatabase? = null

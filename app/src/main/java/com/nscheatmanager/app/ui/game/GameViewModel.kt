@@ -45,9 +45,6 @@ import com.nscheatmanager.app.ui.common.NetworkEndpoint
 import com.nscheatmanager.app.ui.common.UserMessage
 import com.nscheatmanager.app.ui.common.OperationContext
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
 
 data class CheatGroupUiState(
     val name: String,
@@ -99,16 +96,9 @@ data class GameUiState(
     val canDownload: Boolean = false,
     val busy: Boolean = false,
     val detachingDmnt: Boolean = false,
-    val preparingConnection: Boolean = false,
-    val connectionSummary: ConnectionSummary? = null,
     val editMode: Boolean = false,
     val pendingConfirmation: GameConfirmation? = null,
 )
-
-enum class ConnectionSummary {
-    DETACHED_CONNECTED, DETACH_FAILED_CONNECTED, DETACHED_CONNECT_FAILED,
-    DETACH_FAILED_CONNECT_FAILED, CONNECTED, CONNECT_FAILED, DETACH_SUCCEEDED, DETACH_FAILED, CANCELLED,
-}
 
 sealed interface GameConfirmation {
     val id: Long
@@ -157,11 +147,6 @@ enum class GameMessage {
     UPLOAD_COMPLETE,
     IMPORT_COMPLETE,
     DETACH_COMPLETE,
-    DETACHED_CONNECTED,
-    DETACH_FAILED_CONNECTED,
-    DETACHED_CONNECT_FAILED,
-    DETACH_FAILED_CONNECT_FAILED,
-    CONNECT_CANCELLED,
     LOCAL_CHEAT_MISSING,
 }
 
@@ -229,10 +214,6 @@ class GameViewModel private constructor(
     private var lastEditorOperationKey: GameOperationKey? = null
     private enum class PendingTransfer { Download, Upload }
     private var pendingTransfer: PendingTransfer? = null
-    private var connectJob: Job? = null
-    private var pendingConnectDetachResult: Boolean? = null
-    private var pendingConnectActive = false
-    private var observedConnectTransition = false
 
     constructor(
         devices: GameDeviceStore,
@@ -283,52 +264,19 @@ class GameViewModel private constructor(
         }
     }
 
-    fun onConnectionToggle(detachBeforeConnect: Boolean = false) {
-        connectJob?.takeIf { it.isActive }?.let { job ->
-            job.cancel()
-            mutableUiState.update { it.copy(preparingConnection = false, connectionSummary = ConnectionSummary.CANCELLED) }
-            effectChannel.trySend(GameEffect.Message(GameMessage.CONNECT_CANCELLED))
-            return
-        }
+    fun onConnectionToggle() {
         if (sessionState.connection in setOf(
-            ConnectionState.Connecting,
-            ConnectionState.Recognizing,
-            ConnectionState.Ready,
+                ConnectionState.Connecting,
+                ConnectionState.Recognizing,
+                ConnectionState.Ready,
         )
         ) {
             pendingTransfer = null
             session.disconnect()
-            if (sessionState.connection != ConnectionState.Ready) {
-                pendingConnectActive = false
-                pendingConnectDetachResult = null
-                mutableUiState.update { it.copy(connectionSummary = ConnectionSummary.CANCELLED, preparingConnection = false) }
-                effectChannel.trySend(GameEffect.Message(GameMessage.CONNECT_CANCELLED))
-            }
             return
         }
-        val profile = selectedProfile() ?: run {
-            effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE)); return
-        }
-        connectJob = viewModelScope.launch {
-            mutableUiState.update { it.copy(preparingConnection = detachBeforeConnect, connectionSummary = null) }
-            val detachResult = if (detachBeforeConnect) {
-                try {
-                    withTimeout(3_000) { session.detachDmnt() }
-                    true
-                } catch (_: TimeoutCancellationException) {
-                    false
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    false
-                }
-            } else null
-            pendingConnectDetachResult = detachResult
-            pendingConnectActive = true
-            observedConnectTransition = false
-            mutableUiState.update { it.copy(preparingConnection = false) }
-            session.connectAndRecognize(profile)
-        }
+        selectedProfile()?.let(session::connectAndRecognize)
+            ?: effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE))
     }
 
     fun onRecognizeRequested() {
@@ -341,12 +289,10 @@ class GameViewModel private constructor(
             mutableUiState.update { it.copy(detachingDmnt = true) }
             try {
                 session.detachDmnt()
-                mutableUiState.update { it.copy(connectionSummary = ConnectionSummary.DETACH_SUCCEEDED) }
                 effectChannel.trySend(GameEffect.Message(GameMessage.DETACH_COMPLETE))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                mutableUiState.update { it.copy(connectionSummary = ConnectionSummary.DETACH_FAILED) }
                 showNoexsFailure(error)
             } finally {
                 mutableUiState.update { it.copy(detachingDmnt = false) }
@@ -704,7 +650,6 @@ class GameViewModel private constructor(
     }
 
     private fun publishSessionState(next: DeviceSessionState) {
-        publishPendingConnectionResult(next)
         next.operationKey?.let { lastEditorOperationKey = it }
         if (localOverrideIdentity?.titleId != next.game?.titleId || localOverrideIdentity?.buildId != next.game?.buildId) {
             localCheatOverride = null
@@ -751,35 +696,6 @@ class GameViewModel private constructor(
             )
         }
         resumePendingTransfer(next)
-    }
-
-    private fun publishPendingConnectionResult(next: DeviceSessionState) {
-        if (!pendingConnectActive) return
-        if (next.connection != ConnectionState.Disconnected) observedConnectTransition = true
-        val connected = next.connection == ConnectionState.Ready
-        val failed = next.connection == ConnectionState.Error || (observedConnectTransition && next.connection == ConnectionState.Disconnected)
-        if (!connected && !failed) return
-        val detach = pendingConnectDetachResult
-        val summary = when {
-            connected && detach == true -> ConnectionSummary.DETACHED_CONNECTED
-            connected && detach == false -> ConnectionSummary.DETACH_FAILED_CONNECTED
-            connected -> ConnectionSummary.CONNECTED
-            detach == true -> ConnectionSummary.DETACHED_CONNECT_FAILED
-            detach == false -> ConnectionSummary.DETACH_FAILED_CONNECT_FAILED
-            else -> ConnectionSummary.CONNECT_FAILED
-        }
-        val message = when (summary) {
-            ConnectionSummary.DETACHED_CONNECTED -> GameMessage.DETACHED_CONNECTED
-            ConnectionSummary.DETACH_FAILED_CONNECTED -> GameMessage.DETACH_FAILED_CONNECTED
-            ConnectionSummary.DETACHED_CONNECT_FAILED -> GameMessage.DETACHED_CONNECT_FAILED
-            ConnectionSummary.DETACH_FAILED_CONNECT_FAILED -> GameMessage.DETACH_FAILED_CONNECT_FAILED
-            else -> null
-        }
-        pendingConnectActive = false
-        pendingConnectDetachResult = null
-        observedConnectTransition = false
-        mutableUiState.update { it.copy(connectionSummary = summary, preparingConnection = false) }
-        message?.let { effectChannel.trySend(GameEffect.Message(it)) }
     }
 
     private fun requestTransferAfterRecognition(transfer: PendingTransfer, profile: DeviceProfile) {

@@ -32,8 +32,6 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -75,13 +73,12 @@ data class SettingsActions(
     val setDefault: (String) -> Unit,
     val selectLanguage: (String) -> Unit,
     val showMemoryPage: (Boolean) -> Unit,
-    val detachDmntBeforeConnect: (Boolean) -> Unit,
     val editorChanged: (DeviceEditorUiState) -> Unit,
     val saveEditor: () -> Unit,
     val dismissEditor: () -> Unit,
 ) {
     companion object {
-        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -140,7 +137,7 @@ fun NSCheatManagerApp(
 ) {
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
-    val route = backStack?.destination?.route ?: "game"
+    val route = backStack?.destination?.route ?: "cheats"
     val visibleDestinations = mainDestinations.filter { it.route != "memory" || settingsState.showMemoryPage }
     val mainRoute = mainDestinations.any { it.route == route }
     val context = LocalContext.current
@@ -193,7 +190,7 @@ fun NSCheatManagerApp(
 
     fun navigateMain(target: String) {
         navController.navigate(target) {
-            popUpTo("game") { saveState = true }
+            popUpTo("cheats") { saveState = true }
             launchSingleTop = true
             restoreState = true
         }
@@ -213,15 +210,11 @@ fun NSCheatManagerApp(
         }
     }
 
-    LaunchedEffect(editorState.isOpen, backStack?.destination?.route) {
-        if (editorState.isOpen && backStack != null && route != "cheats") navigateMain("cheats")
-    }
-
     LaunchedEffect(settingsState.showMemoryPage, route) {
         if (!settingsState.showMemoryPage && route == "memory") {
             val pendingWrite = memoryState.confirmation
             if (pendingWrite != null) memoryActions.dismiss.invoke(pendingWrite.id)
-            navigateMain("game")
+            navigateMain("cheats")
         }
     }
 
@@ -241,25 +234,7 @@ fun NSCheatManagerApp(
             }
         },
     ) { padding ->
-        val swipeModifier = if (mainRoute && !editorState.isOpen) Modifier.pointerInput(route, visibleDestinations) {
-            var drag = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { drag = 0f },
-                onHorizontalDrag = { _, amount -> drag += amount },
-                onDragCancel = { drag = 0f },
-                onDragEnd = {
-                    val index = visibleDestinations.indexOfFirst { it.route == route }
-                    val targetIndex = when {
-                        drag < -80f -> index + 1
-                        drag > 80f -> index - 1
-                        else -> index
-                    }.coerceIn(0, visibleDestinations.lastIndex)
-                    if (index >= 0 && targetIndex != index) requestNavigation(visibleDestinations[targetIndex].route)
-                    drag = 0f
-                },
-            )
-        } else Modifier
-        NavHost(navController, startDestination = "game", modifier = Modifier.padding(padding).then(swipeModifier).testTag("main-swipe-area")) {
+        NavHost(navController, startDestination = "cheats", modifier = Modifier.padding(padding)) {
             composable("game") {
                 GameScreen(
                     gameState.copy(editMode = editorState.isOpen),
@@ -298,7 +273,6 @@ fun NSCheatManagerApp(
                     onSetDefault = settingsActions.setDefault,
                     onLanguageSelected = settingsActions.selectLanguage,
                     onShowMemoryPageChanged = settingsActions.showMemoryPage,
-                    onDetachDmntBeforeConnectChanged = settingsActions.detachDmntBeforeConnect,
                     onEditorChanged = settingsActions.editorChanged,
                     onSaveEditor = settingsActions.saveEditor,
                     onDismissEditor = settingsActions.dismissEditor,
@@ -389,11 +363,6 @@ internal fun Resources.localizedGameMessage(effect: GameEffect.Message): String 
             GameMessage.UPLOAD_COMPLETE -> R.string.upload_complete
             GameMessage.IMPORT_COMPLETE -> R.string.import_complete
             GameMessage.DETACH_COMPLETE -> R.string.detach_complete
-            GameMessage.DETACHED_CONNECTED -> R.string.connection_summary_detached_connected
-            GameMessage.DETACH_FAILED_CONNECTED -> R.string.connection_summary_detach_failed_connected
-            GameMessage.DETACHED_CONNECT_FAILED -> R.string.connection_summary_detached_connect_failed
-            GameMessage.DETACH_FAILED_CONNECT_FAILED -> R.string.connection_summary_both_failed
-            GameMessage.CONNECT_CANCELLED -> R.string.connection_cancelled
             GameMessage.LOCAL_CHEAT_MISSING -> R.string.cheat_file_missing
         },
     )

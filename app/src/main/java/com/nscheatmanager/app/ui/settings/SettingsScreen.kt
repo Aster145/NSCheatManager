@@ -67,7 +67,6 @@ data class SettingsUiState(
     val editor: DeviceEditorUiState? = null,
     val isSaving: Boolean = false,
     val showMemoryPage: Boolean = false,
-    val detachDmntBeforeConnect: Boolean = true,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,7 +83,6 @@ fun SettingsScreen(
     onSaveEditor: () -> Unit,
     onDismissEditor: () -> Unit,
     onShowMemoryPageChanged: (Boolean) -> Unit = {},
-    onDetachDmntBeforeConnectChanged: (Boolean) -> Unit = {},
     messages: Flow<SettingsMessage> = emptyFlow(),
     modifier: Modifier = Modifier,
 ) {
@@ -93,7 +91,6 @@ fun SettingsScreen(
     val defaultFailed = stringResource(R.string.error_default_device)
     val languageFailed = stringResource(R.string.error_language_change)
     val memoryVisibilityFailed = stringResource(R.string.error_memory_visibility_change)
-    val autoDetachFailed = stringResource(R.string.error_auto_detach_change)
     LaunchedEffect(messages) {
         messages.collect { message ->
             snackbar.showSnackbar(when (message) {
@@ -101,7 +98,6 @@ fun SettingsScreen(
                 SettingsMessage.DEFAULT_FAILED -> defaultFailed
                 SettingsMessage.LANGUAGE_FAILED -> languageFailed
                 SettingsMessage.MEMORY_VISIBILITY_FAILED -> memoryVisibilityFailed
-                SettingsMessage.AUTO_DETACH_FAILED -> autoDetachFailed
             })
         }
     }
@@ -192,18 +188,6 @@ fun SettingsScreen(
                                 )
                             }
                             Switch(checked = state.showMemoryPage, onCheckedChange = onShowMemoryPageChanged)
-                        }
-                        HorizontalDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth().testTag("auto-detach-setting"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.detach_before_connect), style = MaterialTheme.typography.titleSmall)
-                                Text(stringResource(R.string.detach_before_connect_summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Switch(modifier = Modifier.testTag("auto-detach-switch"), checked = state.detachDmntBeforeConnect, onCheckedChange = onDetachDmntBeforeConnectChanged)
                         }
                     }
                 }
