@@ -155,7 +155,7 @@ class CheatFirstFlowTest {
         val state = CheatEditorUiState(
             isOpen = true,
             cheatTabLabel = "BID.txt",
-            notesTabLabel = "BID/notes.txt",
+            notesTabLabel = "notes.txt",
             parseDiagnostic = CheatParseDiagnostic(2, CheatParseDiagnosticKind.InvalidInstructionWord),
         )
         setLocalizedContent(Locale.ENGLISH) { CheatEditorScreen(state, CheatEditorActions.None) }
@@ -168,7 +168,7 @@ class CheatFirstFlowTest {
         val state = CheatEditorUiState(
             isOpen = true,
             cheatTabLabel = "BID.txt",
-            notesTabLabel = "BID/notes.txt",
+            notesTabLabel = "notes.txt",
             parseDiagnostic = CheatParseDiagnostic(2, CheatParseDiagnosticKind.InvalidInstructionWord),
         )
         setLocalizedContent(Locale.SIMPLIFIED_CHINESE) { CheatEditorScreen(state, CheatEditorActions.None) }

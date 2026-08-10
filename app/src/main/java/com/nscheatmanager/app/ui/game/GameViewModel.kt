@@ -210,6 +210,7 @@ class GameViewModel private constructor(
     private var displayedIdentity: GameIdentity? = null
     private var localCheatOverride: CheatFile? = null
     private var localOverrideIdentity: GameIdentity? = null
+    private var lastEditorOperationKey: GameOperationKey? = null
     private enum class PendingTransfer { Download, Upload }
     private var pendingTransfer: PendingTransfer? = null
 
@@ -478,9 +479,25 @@ class GameViewModel private constructor(
         }
     }
 
-    fun currentIdentityForEditor(): GameIdentity? = readyIdentity()
-    fun currentOperationKeyForEditor(): GameOperationKey? = session.currentOperationKey()
-    fun requireCurrentOperationKey(expected: GameOperationKey) = session.requireCurrentOperationKey(expected)
+    fun currentIdentityForEditor(): GameIdentity? = displayedIdentity
+    fun currentOperationKeyForEditor(): GameOperationKey? =
+        session.currentOperationKey() ?: lastEditorOperationKey?.takeIf { key ->
+            sessionState.connection == ConnectionState.Disconnected &&
+                displayedIdentity?.titleId == key.titleId && displayedIdentity?.buildId == key.buildId
+        }
+    fun requireCurrentOperationKey(expected: GameOperationKey) {
+        val current = session.currentOperationKey()
+        if (current != null) {
+            session.requireCurrentOperationKey(expected)
+            return
+        }
+        require(
+            sessionState.connection == ConnectionState.Disconnected &&
+                lastEditorOperationKey == expected &&
+                displayedIdentity?.titleId == expected.titleId &&
+                displayedIdentity?.buildId == expected.buildId,
+        ) { "The selected device or game changed" }
+    }
     override fun currentSnapshot(): MemorySessionSnapshot = session.state.value.let {
         MemorySessionSnapshot(it.operationKey, it.game, it.activeLocks, it.pendingLockCleanup)
     }
@@ -628,6 +645,7 @@ class GameViewModel private constructor(
     }
 
     private fun publishSessionState(next: DeviceSessionState) {
+        next.operationKey?.let { lastEditorOperationKey = it }
         if (localOverrideIdentity?.titleId != next.game?.titleId || localOverrideIdentity?.buildId != next.game?.buildId) {
             localCheatOverride = null
             localOverrideIdentity = null
@@ -651,9 +669,11 @@ class GameViewModel private constructor(
             }
         }
         if (staleConfirmation is GameConfirmation.Download) discardDownload(staleConfirmation.report)
-        displayedIdentity = next.game
-        displayedCheatFile = localCheatOverride ?: next.cheatFile
-        val identity = next.game
+        if (next.game != null) displayedIdentity = next.game
+        if (localCheatOverride != null || next.cheatFile != null || next.connection != ConnectionState.Disconnected) {
+            displayedCheatFile = localCheatOverride ?: next.cheatFile
+        }
+        val identity = displayedIdentity
         mutableUiState.update { current ->
             current.copy(
                 connection = next.connection,

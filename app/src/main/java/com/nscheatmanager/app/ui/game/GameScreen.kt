@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
@@ -107,6 +108,8 @@ fun GameScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
+                modifier = Modifier.height(48.dp),
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 title = {},
                 actions = {
                     val label = stringResource(R.string.more_options)
@@ -152,14 +155,14 @@ fun GameScreen(
         ) {
             when (content) {
                 GameScreenContent.GameInfo -> {
-                    DeviceControls(state, actions)
                     GameIdentityCard(state)
+                    DeviceControls(state, actions)
                     GameActionRow(state, actions)
                 }
                 GameScreenContent.Cheats -> {
                     if (editorState.isOpen) {
                         CheatEditorScreen(editorState, editorActions)
-                    } else if (!state.gameValidated) {
+                    } else if (!state.gameValidated && state.groups.isEmpty()) {
                         Card(Modifier.fillMaxWidth().testTag("cheats-needs-game")) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(stringResource(R.string.recognize_game_first))
@@ -171,11 +174,11 @@ fun GameScreen(
                     }
                 }
                 GameScreenContent.Combined -> {
+                    GameIdentityCard(state)
                     DeviceControls(state, actions)
                     if (editorState.isOpen) {
                         CheatEditorScreen(editorState, editorActions)
                     } else {
-                        GameIdentityCard(state)
                         GameActionRow(state, actions)
                         CheatGroups(state, actions)
                     }

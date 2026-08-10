@@ -118,7 +118,7 @@ class CheatEditorViewModel(
             identity = identity,
             operationKey = operationKey,
             cheatTabLabel = "${identity.buildId.hex}.txt",
-            notesTabLabel = "${identity.buildId.hex}/notes.txt",
+            notesTabLabel = "notes.txt",
         )
         persistSavedMetadata()
         loadJob = lifecycleScope.launch {
@@ -399,7 +399,7 @@ class CheatEditorViewModel(
                 selectedTab = savedStateHandle.get<String>(KEY_SELECTED_TAB)?.let(EditorTab::valueOf)
                     ?: EditorTab.Cheat,
                 cheatTabLabel = "${expectedKey.buildId.hex}.txt",
-                notesTabLabel = "${expectedKey.buildId.hex}/notes.txt",
+                notesTabLabel = "notes.txt",
                 cheatText = draft.cheatText,
                 notesText = draft.notesText,
                 dirty = savedStateHandle[KEY_DIRTY] ?: false,
@@ -417,7 +417,7 @@ class CheatEditorViewModel(
                 isLoading = true,
                 operationKey = key,
                 cheatTabLabel = "${key.buildId.hex}.txt",
-                notesTabLabel = "${key.buildId.hex}/notes.txt",
+                notesTabLabel = "notes.txt",
                 pendingNavigationRoute = savedStateHandle[KEY_NAVIGATION_ROUTE],
             )
         } else {

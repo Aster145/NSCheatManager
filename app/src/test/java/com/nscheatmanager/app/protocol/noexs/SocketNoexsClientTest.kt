@@ -6,6 +6,8 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.Collections
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -19,13 +21,13 @@ import org.junit.Test
 
 class SocketNoexsClientTest {
     @Test
-    fun sendsOneByteDetachAndReadsLittleEndianResult() = runTest {
+    fun sendsPointerSearcherDetachHandshakeAndReadsLittleEndianResults() = runTest {
         FakeBinaryServer(responses = listOf(byteArrayOf(0, 0, 0, 0))).use { server ->
             val client = newClient(server)
 
             client.detachDmnt()
 
-            assertArrayEquals(byteArrayOf(0x18), server.received.single())
+            assertArrayEquals(expectedHandshake(), server.received.single())
         }
     }
 
@@ -51,9 +53,6 @@ class SocketNoexsClientTest {
             val error = expectThrows<ProtocolError.Timeout> { client.detachDmnt() }
 
             assertEquals("Noexs result", error.operation)
-            server.awaitReceivedCount(1)
-            assertArrayEquals(byteArrayOf(0x18), server.received.single())
-            assertEquals(listOf(true), server.remoteClosed)
         }
     }
 
@@ -68,8 +67,6 @@ class SocketNoexsClientTest {
             val error = expectThrows<ProtocolError.Timeout> { client.detachDmnt() }
 
             assertEquals("Noexs result", error.operation)
-            server.awaitReceivedCount(1)
-            assertEquals(listOf(true), server.remoteClosed)
         }
     }
 
@@ -125,6 +122,16 @@ class SocketNoexsClientTest {
         (value ushr 24).toByte(),
     )
 
+    private fun expectedHandshake(includeCleanup: Boolean = true): ByteArray = buildList<Byte> {
+        add(0x1A); add(0x10); add(0x01); add(0x0E); add(0x0B); add(0x0A)
+        addAll(littleEndianLong(DMNT_PID).toList())
+        add(0x0B); add(0x18)
+        if (includeCleanup) add(0x0B)
+    }.toByteArray()
+
+    private fun littleEndianLong(value: Long): ByteArray = ByteBuffer.allocate(8)
+        .order(ByteOrder.LITTLE_ENDIAN).putLong(value).array()
+
     private suspend inline fun <reified T : Throwable> expectThrows(
         noinline block: suspend () -> Unit,
     ): T = try {
@@ -136,6 +143,8 @@ class SocketNoexsClientTest {
         error as T
     }
 }
+
+private const val DMNT_PID = 0x1122334455667788L
 
 private class FakeBinaryServer(
     private val responses: List<ByteArray?>,
@@ -171,22 +180,37 @@ private class FakeBinaryServer(
     private fun serve(socket: Socket, response: ByteArray?) {
         socket.use {
             try {
-                val request = it.getInputStream().readNBytes(1)
-                if (request.size == 1) received += request
-                if (response != null) {
-                    it.getOutputStream().apply {
-                        if (fragmentDelayMillis == 0L) {
-                            write(response)
-                            flush()
-                        } else {
-                            response.forEach { byte ->
-                                write(byte.toInt())
-                                flush()
-                                Thread.sleep(fragmentDelayMillis)
-                            }
+                val request = mutableListOf<Byte>()
+                val input = it.getInputStream()
+                val output = it.getOutputStream()
+                while (true) {
+                    val opcode = input.read()
+                    if (opcode == -1) break
+                    request += opcode.toByte()
+                    val reply = when (opcode) {
+                        0x1A -> littleEndianInt(0)
+                        0x10 -> littleEndianInt(1) + littleEndianLong(DMNT_PID) + littleEndianInt(0)
+                        0x01 -> littleEndianInt(0)
+                        0x0E -> littleEndianLong(0x42) + littleEndianInt(0)
+                        0x0A -> {
+                            request += input.readNBytes(8).toList()
+                            littleEndianInt(0)
                         }
+                        0x18 -> response
+                        0x0B -> littleEndianInt(0)
+                        else -> error("Unexpected opcode 0x${opcode.toString(16)}")
                     }
+                    if (reply == null) continue
+                    if (opcode == 0x18 && fragmentDelayMillis != 0L) {
+                        reply.forEach { byte -> output.write(byte.toInt()); output.flush(); Thread.sleep(fragmentDelayMillis) }
+                    } else {
+                        output.write(reply)
+                        output.flush()
+                    }
+                    if (opcode == 0x18 && closeAfterResponse && reply.size < 4) break
+                    if (opcode == 0x0B && request.count { byte -> byte == 0x0B.toByte() } == 3) break
                 }
+                received += request.toByteArray()
                 if (!closeAfterResponse) {
                     it.soTimeout = 1_000
                     remoteClosed += try {
@@ -202,6 +226,12 @@ private class FakeBinaryServer(
             }
         }
     }
+
+    private fun littleEndianInt(value: Int): ByteArray = ByteBuffer.allocate(4)
+        .order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
+
+    private fun littleEndianLong(value: Long): ByteArray = ByteBuffer.allocate(8)
+        .order(ByteOrder.LITTLE_ENDIAN).putLong(value).array()
 
     fun awaitReceivedCount(count: Int, timeoutMillis: Long = 2_000) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)

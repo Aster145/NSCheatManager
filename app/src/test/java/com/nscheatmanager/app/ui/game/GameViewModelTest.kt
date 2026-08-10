@@ -89,6 +89,27 @@ class GameViewModelTest {
     }
 
     @Test
+    fun disconnectRetainsLocalGroupsAndAllowsOfflineEditorGuard() = runTest(dispatcher) {
+        val session = FakeSessionGateway()
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
+        session.state.value = readyState(CheatFile(listOf(SUPPORTED), emptyList()))
+        advanceUntilIdle()
+        val editorKey = requireNotNull(viewModel.currentOperationKeyForEditor())
+
+        session.state.value = session.state.value.copy(
+            connection = ConnectionState.Disconnected,
+            gameValidated = false,
+        )
+        advanceUntilIdle()
+
+        assertEquals(listOf("Write once"), viewModel.uiState.value.groups.map(CheatGroupUiState::name))
+        assertFalse(viewModel.uiState.value.groups.single().executable)
+        assertEquals(GAME, viewModel.currentIdentityForEditor())
+        assertEquals(editorKey, viewModel.currentOperationKeyForEditor())
+        viewModel.requireCurrentOperationKey(editorKey)
+    }
+
+    @Test
     fun falseToTrueExecutesOnceAndDuplicateTapCannotReplay() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
         val session = FakeSessionGateway(executeRelease = release)

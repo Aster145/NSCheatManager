@@ -65,7 +65,7 @@ class CheatEditorViewModelTest {
         assertEquals("[Raw]\r\n04000000 00000020 00000001\r\n", viewModel.uiState.value.cheatText)
         assertEquals("note\r\n", viewModel.uiState.value.notesText)
         assertEquals("${GAME.buildId.hex}.txt", viewModel.uiState.value.cheatTabLabel)
-        assertEquals("${GAME.buildId.hex}/notes.txt", viewModel.uiState.value.notesTabLabel)
+        assertEquals("notes.txt", viewModel.uiState.value.notesTabLabel)
     }
 
     @Test
