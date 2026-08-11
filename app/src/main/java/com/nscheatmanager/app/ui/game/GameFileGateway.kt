@@ -2,6 +2,7 @@ package com.nscheatmanager.app.ui.game
 
 import com.nscheatmanager.app.cheats.parser.CheatFile
 import com.nscheatmanager.app.cheats.parser.CheatFileParser
+import com.nscheatmanager.app.cheats.parser.CheatTextDecoding
 import com.nscheatmanager.app.cheats.parser.CheatParseDiagnostic
 import com.nscheatmanager.app.data.files.CheatMirror
 import com.nscheatmanager.app.data.files.CheatZipService
@@ -85,7 +86,7 @@ class MirrorGameFileGateway(
             Files.readAllBytes(notesPath)
         } else null
         EditableGameFiles(
-            cheatText = decodeUtf8(cheatBytes, "Cheat file"),
+            cheatText = CheatTextDecoding.decodeForParsing(cheatBytes),
             notesText = notesBytes?.let { decodeUtf8(it, "notes.txt") }.orEmpty(),
             notesExist = notesExist,
         )

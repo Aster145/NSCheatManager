@@ -1,6 +1,7 @@
 package com.nscheatmanager.app.domain
 
 import com.nscheatmanager.app.cheats.parser.CheatFileParser
+import com.nscheatmanager.app.cheats.parser.CheatTextDecoding
 import com.nscheatmanager.app.core.model.BuildId
 import com.nscheatmanager.app.core.model.TitleId
 import com.nscheatmanager.app.data.files.CheatMirror
@@ -340,15 +341,7 @@ class SyncCurrentGameFiles(
     }
 
     private fun parseCheat(bytes: ByteArray) {
-        val text = try {
-            StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (error: Exception) {
-            throw DownloadedCheatParseError(null, error)
-        }
+        val text = CheatTextDecoding.decodeForParsing(bytes)
         parser.parse(text).diagnostics.firstOrNull()?.let { diagnostic ->
             throw DownloadedCheatParseError(diagnostic)
         }

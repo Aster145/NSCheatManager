@@ -1,7 +1,11 @@
 package com.nscheatmanager.app.ui
 
 import android.content.Intent
+import android.content.ContentValues
 import android.content.res.Resources
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -65,6 +69,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class SettingsActions(
     val add: () -> Unit,
@@ -172,6 +180,10 @@ fun NSCheatManagerApp(
                         failure = gameEffectActions.externalFailure,
                     )
                 }.onFailure(gameEffectActions.externalFailure)
+                is GameEffect.Screenshot -> runCatching {
+                    withContext(Dispatchers.IO) { saveScreenshot(context, effect.jpeg) }
+                }.onSuccess { name -> snackbar.showSnackbar("截图已保存：$name") }
+                    .onFailure(gameEffectActions.externalFailure)
                 is GameEffect.Message -> snackbar.showSnackbar(resources.localizedGameMessage(effect))
                 is GameEffect.UserError -> snackbar.showSnackbar(resources.localizedUserMessage(effect.message))
             }
@@ -309,6 +321,25 @@ fun NSCheatManagerApp(
             },
         )
     }
+}
+
+private fun saveScreenshot(context: android.content.Context, jpeg: ByteArray): String {
+    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+    val name = "NSCheatManager_${stamp}.jpg"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/NSCheatManager")
+        }
+        val uri = requireNotNull(context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
+        context.contentResolver.openOutputStream(uri)?.use { it.write(jpeg) } ?: error("Could not open screenshot output")
+    } else {
+        val directory = File(requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)), "NSCheatManager")
+        directory.mkdirs()
+        File(directory, name).outputStream().use { it.write(jpeg) }
+    }
+    return name
 }
 
 private fun Resources.localizedUserMessage(message: com.nscheatmanager.app.ui.common.UserMessage): String {

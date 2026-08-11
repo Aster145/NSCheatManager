@@ -72,6 +72,8 @@ data class GameScreenActions(
     val selectDevice: (String) -> Unit,
     val connectionToggle: () -> Unit,
     val detachDmnt: () -> Unit,
+    val screenshot: () -> Unit,
+    val toggleScreen: () -> Unit,
     val cheatChecked: (String, Boolean, Boolean) -> Unit,
     val toggleSection: (Int) -> Unit,
     val editModeChanged: (Boolean) -> Unit,
@@ -84,7 +86,7 @@ data class GameScreenActions(
     val about: () -> Unit,
 ) {
     companion object {
-        val None = GameScreenActions({}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {})
+        val None = GameScreenActions({}, {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -322,6 +324,7 @@ private fun ConnectionButton(state: GameUiState, actions: GameScreenActions, mod
 
 @Composable
 private fun GameActionRow(state: GameUiState, actions: GameScreenActions) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
             modifier = Modifier.weight(1f).testTag("recognize-game-primary"),
@@ -329,6 +332,11 @@ private fun GameActionRow(state: GameUiState, actions: GameScreenActions) {
             enabled = state.connection == ConnectionState.Ready && !state.busy,
         ) { Text(stringResource(R.string.recognize_game)) }
         DetachButton(state, actions, Modifier.weight(1f))
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedButton(onClick = actions.screenshot, modifier = Modifier.weight(1f), enabled = state.connection == ConnectionState.Ready && !state.busy) { Text("截图") }
+        OutlinedButton(onClick = actions.toggleScreen, modifier = Modifier.weight(1f), enabled = state.connection == ConnectionState.Ready && !state.busy) { Text(if (state.screenOff) "亮屏" else "熄屏") }
+    }
     }
 }
 

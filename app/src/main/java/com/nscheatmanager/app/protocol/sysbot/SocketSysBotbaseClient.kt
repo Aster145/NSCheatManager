@@ -123,6 +123,25 @@ class SocketSysBotbaseClient(
         }
     }
 
+    override suspend fun captureScreenshot(): ByteArray = mutex.withLock {
+        withContext(dispatcher) {
+            ensureConnectedLocked()
+            val jpeg = parseBytes(queryLocked("pixelPeek"))
+            if (jpeg.size < 4 || jpeg[0] != 0xFF.toByte() || jpeg[1] != 0xD8.toByte() ||
+                jpeg[jpeg.lastIndex - 1] != 0xFF.toByte() || jpeg.last() != 0xD9.toByte()) {
+                throw ProtocolError.MalformedResponse("pixelPeek did not return a JPEG")
+            }
+            jpeg
+        }
+    }
+
+    override suspend fun setScreenEnabled(enabled: Boolean) = mutex.withLock {
+        withContext(dispatcher) {
+            ensureConnectedLocked()
+            sendLocked(if (enabled) "screenOn" else "screenOff")
+        }
+    }
+
     private fun ensureConnectedLocked() {
         if (explicitlyDisconnected) throw ProtocolError.Disconnected()
         if (socket?.isConnected == true && socket?.isClosed == false) return

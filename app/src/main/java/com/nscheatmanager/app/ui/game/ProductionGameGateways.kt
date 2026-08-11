@@ -46,6 +46,12 @@ class DeviceSessionGateway(private val delegate: DeviceSession) : GameSessionGat
         delegate.detachDmnt()
     }
 
+    override suspend fun captureScreenshot(): ByteArray = delegate.captureScreenshot()
+
+    override suspend fun setScreenEnabled(enabled: Boolean) {
+        delegate.setScreenEnabled(enabled)
+    }
+
     override fun currentOperationKey(): GameOperationKey? = delegate.currentOperationKey()
 
     override fun requireCurrentOperationKey(expected: GameOperationKey) {

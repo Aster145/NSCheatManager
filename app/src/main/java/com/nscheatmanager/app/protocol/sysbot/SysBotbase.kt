@@ -19,4 +19,6 @@ interface SysBotbase {
     suspend fun write(target: MemoryTarget, bytes: ByteArray)
     suspend fun freeze(absoluteAddress: ULong, bytes: ByteArray)
     suspend fun unfreeze(absoluteAddress: ULong)
+    suspend fun captureScreenshot(): ByteArray = throw UnsupportedOperationException("Screenshot is not supported")
+    suspend fun setScreenEnabled(enabled: Boolean): Unit { throw UnsupportedOperationException("Screen control is not supported") }
 }

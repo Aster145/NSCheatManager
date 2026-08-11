@@ -299,6 +299,13 @@ class DeviceSession(
         }
     }
 
+    /** Screen capture/control need a live sys-botbase socket but no foreground-game identity. */
+    suspend fun captureScreenshot(): ByteArray = connectedOperation { live -> live.client.captureScreenshot() }
+
+    suspend fun setScreenEnabled(enabled: Boolean): Unit = connectedOperation { live ->
+        live.client.setScreenEnabled(enabled)
+    }
+
     suspend fun readValue(expected: GameOperationKey, target: MemoryTarget, type: ValueType, hexByteCount: Int? = null): MemoryReadResult =
         readyOperation(expected) { token, live, identity ->
             try { memoryUseCases.readValue(live.client, identity, target, type, hexByteCount).also { checkpoint(token) } }
@@ -773,6 +780,19 @@ class DeviceSession(
             } finally {
                 unregisterActiveOperation()
             }
+        }
+    }
+
+    private suspend fun <T> connectedOperation(action: suspend (LiveConnection) -> T): T = operationMutex.withLock {
+        registerActiveOperation()
+        try {
+            val current = mutableState.value
+            if (current.connection != ConnectionState.Ready) throw SessionNotReadyException("Connect to the device first")
+            val live = liveConnection?.takeIf { it.device.id == current.device?.id }
+                ?: throw SessionNotReadyException("The selected device socket is not connected")
+            action(live)
+        } finally {
+            unregisterActiveOperation()
         }
     }
 

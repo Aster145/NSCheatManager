@@ -104,6 +104,8 @@ class MainActivity : AppCompatActivity() {
                         selectDevice = gameViewModel::onDeviceSelected,
                         connectionToggle = gameViewModel::onConnectionToggle,
                         detachDmnt = gameViewModel::onDetachDmntRequested,
+                        screenshot = gameViewModel::onScreenshotRequested,
+                        toggleScreen = gameViewModel::onScreenToggleRequested,
                         cheatChecked = gameViewModel::onCheatChecked,
                         toggleSection = gameViewModel::toggleSection,
                         editModeChanged = { enabled ->

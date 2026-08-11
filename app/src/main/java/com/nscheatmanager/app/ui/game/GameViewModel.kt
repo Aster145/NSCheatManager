@@ -106,6 +106,7 @@ data class GameUiState(
     val canDownload: Boolean = false,
     val busy: Boolean = false,
     val detachingDmnt: Boolean = false,
+    val screenOff: Boolean = false,
     val editMode: Boolean = false,
     val pendingConfirmation: GameConfirmation? = null,
 )
@@ -165,6 +166,7 @@ data class ShareArchive(val fileName: String, val bytes: ByteArray)
 sealed interface GameEffect {
     data object OpenZipDocument : GameEffect
     data class Share(val archive: ShareArchive) : GameEffect
+    data class Screenshot(val jpeg: ByteArray) : GameEffect
     data class Message(
         val message: GameMessage,
         val detail: String? = null,
@@ -187,6 +189,8 @@ interface GameSessionGateway {
     fun disconnect()
     fun recognizeAgain()
     suspend fun detachDmnt()
+    suspend fun captureScreenshot(): ByteArray = error("Screenshot unavailable")
+    suspend fun setScreenEnabled(enabled: Boolean): Unit = error("Screen control unavailable")
     fun currentOperationKey(): GameOperationKey?
     fun requireCurrentOperationKey(expected: GameOperationKey)
     suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport
@@ -316,6 +320,19 @@ class GameViewModel private constructor(
                 mutableUiState.update { it.copy(detachingDmnt = false) }
             }
         }
+    }
+
+    fun onScreenshotRequested() = viewModelScope.launch {
+        runCatching { session.captureScreenshot() }
+            .onSuccess { effectChannel.trySend(GameEffect.Screenshot(it)) }
+            .onFailure(::showFailure)
+    }
+
+    fun onScreenToggleRequested() = viewModelScope.launch {
+        val nextOff = !mutableUiState.value.screenOff
+        runCatching { session.setScreenEnabled(!nextOff) }
+            .onSuccess { mutableUiState.update { it.copy(screenOff = nextOff) } }
+            .onFailure(::showFailure)
     }
 
     fun onCheatChecked(groupName: String, wasChecked: Boolean, isChecked: Boolean) {
