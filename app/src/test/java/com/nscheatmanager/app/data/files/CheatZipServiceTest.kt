@@ -115,9 +115,9 @@ class CheatZipServiceTest {
                 lowercaseNotes to notes,
             ),
             "extra file" to zipOf(cheatPath to validCheat, "$cheatPath.bak" to byteArrayOf(1)),
-            "extra directory" to zipOf(
+            "noncanonical directory" to zipOf(
                 cheatPath to validCheat,
-                "atmosphere/contents/${titleId.hex}/cheats/" to byteArrayOf(),
+                "atmosphere/contents/${titleId.hex}/cheats/extra/" to byteArrayOf(),
             ),
             "mismatched Title ID notes" to zipOf(cheatPath to validCheat, mismatchNotes to notes),
             "legacy Build ID notes layout" to zipOf(

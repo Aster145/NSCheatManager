@@ -142,10 +142,9 @@ class MemoryViewModel(
         workScope.launch { runCatching { bookmarkStore.delete(key.titleId, key.buildId, name) }.onFailure { fail(MemoryError.OperationFailed) } }
     }
 
-    fun exportBookmarks(noexes: Boolean): String? {
-        val key = gateway.currentSnapshot().operationKey ?: run { fail(MemoryError.SessionRequired); return null }
-        return if (noexes) MemoryBookmarkJson.exportNoexes(mutableState.value.bookmarks).first
-        else MemoryBookmarkJson.exportNative(key.titleId, key.buildId, mutableState.value.bookmarks)
+    fun exportBookmarks(): String? {
+        gateway.currentSnapshot().operationKey ?: run { fail(MemoryError.SessionRequired); return null }
+        return MemoryBookmarkJson.exportNoexes(mutableState.value.bookmarks).first
     }
 
     fun beginBookmarkImport(json: String) {

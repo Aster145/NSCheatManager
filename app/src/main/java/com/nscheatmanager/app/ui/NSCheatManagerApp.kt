@@ -234,7 +234,7 @@ fun NSCheatManagerApp(
             }
         },
     ) { padding ->
-        NavHost(navController, startDestination = "cheats", modifier = Modifier.padding(padding)) {
+        NavHost(navController, startDestination = "game", modifier = Modifier.padding(padding)) {
             composable("game") {
                 GameScreen(
                     gameState.copy(editMode = editorState.isOpen),

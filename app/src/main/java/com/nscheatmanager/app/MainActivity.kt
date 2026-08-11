@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity() {
                         connectionToggle = gameViewModel::onConnectionToggle,
                         detachDmnt = gameViewModel::onDetachDmntRequested,
                         cheatChecked = gameViewModel::onCheatChecked,
+                        toggleSection = gameViewModel::toggleSection,
                         editModeChanged = { enabled ->
                             if (enabled) {
                                 val identity = gameViewModel.currentIdentityForEditor()
@@ -146,7 +147,7 @@ class MainActivity : AppCompatActivity() {
                     ),
                     editorEffects = editorViewModel.effects,
                     editorEffectActions = EditorEffectActions(
-                        saved = { saved -> gameViewModel.onLocalFileSaved(saved.identity, saved.file) },
+                        saved = { saved -> gameViewModel.onLocalFileSaved(saved.identity, saved.file, saved.notesText) },
                     ),
                     memoryState = memoryState,
                     memoryActions = MemoryActions(
@@ -158,8 +159,8 @@ class MainActivity : AppCompatActivity() {
                         applyBookmark = memoryViewModel::applyBookmark, saveBookmark = memoryViewModel::saveBookmark,
                         deleteBookmark = memoryViewModel::deleteBookmark,
                         importBookmarks = { importBookmarks.launch(arrayOf("application/json", "text/plain")) },
-                        exportBookmarks = { noexes -> memoryViewModel.exportBookmarks(noexes)?.let {
-                            pendingBookmarkExport = it; exportBookmarks.launch(if (noexes) "NSCheatManager-noexes-bookmarks.json" else "NSCheatManager-bookmarks.json")
+                        exportBookmarks = { memoryViewModel.exportBookmarks()?.let {
+                            pendingBookmarkExport = it; exportBookmarks.launch("NSCheatManager-noexes-bookmarks.json")
                         } },
                         confirmBookmarkImport = memoryViewModel::confirmBookmarkImport,
                         dismissBookmarkImport = memoryViewModel::dismissBookmarkImport,

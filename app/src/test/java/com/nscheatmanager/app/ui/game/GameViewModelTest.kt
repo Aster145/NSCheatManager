@@ -164,7 +164,7 @@ class GameViewModelTest {
         release.complete(Unit)
         advanceUntilIdle()
 
-        assertTrue(files.loaded.isEmpty())
+        assertEquals(listOf(GAME, GAME_B), files.loaded)
         assertEquals(0, files.downloadPublishes)
         assertEquals(GAME_B.titleId.hex, viewModel.uiState.value.titleId)
     }

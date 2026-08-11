@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -72,6 +73,7 @@ data class GameScreenActions(
     val connectionToggle: () -> Unit,
     val detachDmnt: () -> Unit,
     val cheatChecked: (String, Boolean, Boolean) -> Unit,
+    val toggleSection: (Int) -> Unit,
     val editModeChanged: (Boolean) -> Unit,
     val recognize: () -> Unit,
     val download: () -> Unit,
@@ -82,7 +84,7 @@ data class GameScreenActions(
     val about: () -> Unit,
 ) {
     companion object {
-        val None = GameScreenActions({}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {})
+        val None = GameScreenActions({}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -119,9 +121,15 @@ fun GameScreen(
                     ) { Text("⋮") }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         ToggleOrderedMenuItem(0, "menu-edit", true, state.editMode || editorState.isOpen, text = {
-                            Checkbox(modifier = Modifier.clearAndSetSemantics { }, checked = state.editMode || editorState.isOpen, onCheckedChange = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(stringResource(R.string.edit_mode))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    modifier = Modifier.clearAndSetSemantics { },
+                                    checked = state.editMode || editorState.isOpen,
+                                    onCheckedChange = null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.edit_mode))
+                            }
                         }) {
                             menuExpanded = false
                             actions.editModeChanged(!(state.editMode || editorState.isOpen))
@@ -420,15 +428,44 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
         }
         return
     }
-    state.groups.forEachIndexed { index, group ->
+    /*state.sections.filter { it.collapsed && it.name != null }.forEach { section ->
+        TextButton(
+            onClick = { actions.toggleSection(section.id) },
+            modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer),
+        ) { Text("${section.name} · ${section.groups.size}", color = MaterialTheme.colorScheme.onSecondaryContainer) }
+    }*/
+    val visibleSections = state.sections
+    visibleSections.flatMap { it.groups }.forEachIndexed { index, group ->
+        val section = visibleSections.firstOrNull { group in it.groups }
+        if (section?.name != null && section.groups.firstOrNull() == group) {
+            TextButton(
+                onClick = { actions.toggleSection(section.id) },
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).semantics {
+                    stateDescription = if (section.collapsed) "collapsed" else "expanded"
+                },
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text("${section.name} · ${section.groups.size}", color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    section.note?.let { note ->
+                        Text(
+                            if (section.collapsed) note.lineSequence().firstOrNull().orEmpty() else note,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
+        }
+        if (section?.collapsed == true) return@forEachIndexed
         if (index > 0) HorizontalDivider()
-        val diagnosticText = if (!group.executable) localizedDiagnostic(group) else null
-        val accessibilityLabel = diagnosticText?.let {
+        // A disconnected Switch already makes every row unavailable. Keep the list quiet in
+        // that state, and do not expose validator internals in the normal cheat browser.
+        val accessibilityLabel = group.note?.let {
             stringResource(R.string.message_join, group.name, it)
         } ?: group.name
         val stateLabel = stringResource(
             when {
-                !group.executable -> R.string.cheat_state_unsupported
+                !group.executable -> R.string.cheat_state_unchecked
                 group.checked -> R.string.cheat_state_checked
                 else -> R.string.cheat_state_unchecked
             },
@@ -458,10 +495,10 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
             )
             Column(Modifier.weight(1f)) {
                 Text(group.name, style = MaterialTheme.typography.titleSmall)
-                if (!group.executable) {
+                group.note?.let { note ->
                     Text(
-                        diagnosticText.orEmpty(),
-                        color = MaterialTheme.colorScheme.error,
+                        note,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

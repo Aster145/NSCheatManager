@@ -276,6 +276,7 @@ class CheatZipService internal constructor(
             val centralEntries = parseCentralDirectory(archive)
             val centralByCanonical = linkedMapOf<String, CentralEntry>()
             centralEntries.forEach { entry ->
+                if (entry.rawName.endsWith('/')) return@forEach
                 val candidate = classifyPath(entry.rawName)
                 if (centralByCanonical.put(candidate.canonicalPath, entry.copy(candidate = candidate)) != null) {
                     throw ZipImportError("ZIP contains duplicate normalized path: ${candidate.canonicalPath}")
@@ -517,7 +518,12 @@ class CheatZipService internal constructor(
     }
 
     private fun validateExternalType(creatorSystem: Int, externalAttributes: Long, rawName: String) {
-        if (rawName.endsWith('/')) throw ZipImportError("Directory entries are not allowed")
+        if (rawName.endsWith('/')) {
+            if (!isCanonicalDirectory(rawName)) {
+                throw ZipImportError("ZIP contains a directory outside the canonical Atmosphere layout")
+            }
+            return
+        }
         val unixMode = ((externalAttributes ushr 16) and 0xFFFF).toInt()
         val fileType = unixMode and UNIX_FILE_TYPE_MASK
         if (fileType == UNIX_SYMLINK) throw ZipImportError("Symbolic links are not allowed")
@@ -538,7 +544,13 @@ class CheatZipService internal constructor(
             while (true) {
                 val zipEntry = zip.nextEntry ?: break
                 if (extracted.size >= limits.maxEntries) throw ZipImportError("ZIP contains too many entries")
-                if (zipEntry.isDirectory) throw ZipImportError("Directory entries are not allowed")
+                if (zipEntry.isDirectory) {
+                    if (!isCanonicalDirectory(zipEntry.name)) {
+                        throw ZipImportError("ZIP contains a directory outside the canonical Atmosphere layout")
+                    }
+                    zip.closeEntry()
+                    continue
+                }
                 val candidate = classifyPath(zipEntry.name)
                 if (extracted.containsKey(candidate.canonicalPath)) {
                     throw ZipImportError("ZIP contains duplicate normalized path: ${candidate.canonicalPath}")
@@ -609,6 +621,14 @@ class CheatZipService internal constructor(
             )
         }
         throw ZipImportError("ZIP contains an entry outside the canonical Atmosphere layout")
+    }
+
+    private fun isCanonicalDirectory(rawName: String): Boolean {
+        validateRawPath(rawName.dropLast(1))
+        return rawName == "atmosphere/" ||
+            rawName == "atmosphere/contents/" ||
+            Regex("atmosphere/contents/[0-9A-Fa-f]{16}/").matches(rawName) ||
+            Regex("atmosphere/contents/[0-9A-Fa-f]{16}/cheats/").matches(rawName)
     }
 
     private fun validateRawPath(rawName: String) {

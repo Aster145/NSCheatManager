@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.nscheatmanager.app.cheats.parser.CheatFile
 import com.nscheatmanager.app.cheats.parser.CheatGroup
+import com.nscheatmanager.app.cheats.parser.CheatNotesParser
 import com.nscheatmanager.app.cheats.vm.CheatValidationError
 import com.nscheatmanager.app.cheats.vm.CheatValidator
 import com.nscheatmanager.app.cheats.vm.ExecutionReport
@@ -48,6 +49,7 @@ import kotlinx.coroutines.runBlocking
 
 data class CheatGroupUiState(
     val name: String,
+    val note: String? = null,
     val checked: Boolean = false,
     val executable: Boolean = true,
     val executing: Boolean = false,
@@ -56,6 +58,13 @@ data class CheatGroupUiState(
     val validationDetail: String? = null,
     val diagnostic: CheatDiagnosticUiState? = null,
     val lastExecutedAtEpochMillis: Long? = null,
+)
+data class CheatSectionUiState(
+    val id: Int,
+    val name: String?,
+    val note: String? = null,
+    val collapsed: Boolean,
+    val groups: List<CheatGroupUiState>,
 )
 
 enum class CheatDiagnosticKind {
@@ -91,6 +100,7 @@ data class GameUiState(
     val heapBase: String? = null,
     val mirrorPath: String? = null,
     val groups: List<CheatGroupUiState> = emptyList(),
+    val sections: List<CheatSectionUiState> = emptyList(),
     val missingMirror: Boolean = false,
     val canImport: Boolean = false,
     val canDownload: Boolean = false,
@@ -208,6 +218,9 @@ class GameViewModel private constructor(
     private var nextConfirmationId = 1L
     private var sessionState = DeviceSessionState()
     private var displayedCheatFile: CheatFile? = null
+    private val collapsedSections = mutableSetOf<Int>()
+    private var displayedNotes: Map<String, String> = emptyMap()
+    private var hydratedNotesIdentity: GameIdentity? = null
     private var displayedIdentity: GameIdentity? = null
     private var localCheatOverride: CheatFile? = null
     private var localOverrideIdentity: GameIdentity? = null
@@ -281,6 +294,11 @@ class GameViewModel private constructor(
 
     fun onRecognizeRequested() {
         runCatching(session::recognizeAgain).onFailure(::showFailure)
+    }
+
+    fun toggleSection(id: Int) {
+        if (!collapsedSections.add(id)) collapsedSections.remove(id)
+        republishGroups()
     }
 
     fun onDetachDmntRequested() {
@@ -551,9 +569,11 @@ class GameViewModel private constructor(
         if (confirmation is GameConfirmation.Download) discardDownload(confirmation.report)
     }
 
-    fun onLocalFileSaved(identity: GameIdentity, file: CheatFile) {
+    fun onLocalFileSaved(identity: GameIdentity, file: CheatFile, notesText: String = "") {
         if (displayedIdentity?.titleId != identity.titleId || displayedIdentity?.buildId != identity.buildId) return
         displayedCheatFile = file
+        displayedNotes = CheatNotesParser.parse(notesText)
+        hydratedNotesIdentity = identity
         localCheatOverride = file
         localOverrideIdentity = identity
         republishGroups()
@@ -566,31 +586,36 @@ class GameViewModel private constructor(
         confirmation: DownloadOverwriteConfirmation?,
     ) {
         viewModelScope.launch {
-            runCatching {
-                files.download(profile, identity, confirmation) { session.requireCurrentOperationKey(key) }
-            }
-                .mapCatching { report ->
+            try {
+                val report = files.download(profile, identity, confirmation) {
                     session.requireCurrentOperationKey(key)
-                    report
                 }
-                .onSuccess { report ->
-                    when (report) {
-                        TransferReport.RemoteCheatMissing ->
-                            effectChannel.trySend(GameEffect.Message(GameMessage.REMOTE_CHEAT_MISSING))
-                        is TransferReport.RequiresLocalOverwriteConfirmation ->
-                            setConfirmation { id -> GameConfirmation.Download(id, key, report) }
-                        is TransferReport.Downloaded -> {
+                session.requireCurrentOperationKey(key)
+                when (report) {
+                    TransferReport.RemoteCheatMissing ->
+                        effectChannel.trySend(GameEffect.Message(GameMessage.REMOTE_CHEAT_MISSING))
+                    is TransferReport.RequiresLocalOverwriteConfirmation ->
+                        setConfirmation { id -> GameConfirmation.Download(id, key, report) }
+                    is TransferReport.Downloaded -> {
+                        // Publish the mirror contents before claiming success. This is deliberately
+                        // separate from the FTP operation so a read/parse failure is not misreported.
+                        try {
                             reloadLocal(key, identity)
-                            effectChannel.trySend(GameEffect.Message(GameMessage.DOWNLOAD_COMPLETE))
+                        } catch (error: Throwable) {
+                            showFailure(error, OperationContext.ZIP)
+                            return@launch
                         }
-                        TransferReport.StaleLocalSnapshot ->
-                            effectChannel.trySend(GameEffect.Message(GameMessage.STALE_LOCAL_FILES))
-                        is TransferReport.RequiresDirectOverwriteConfirmation,
-                        is TransferReport.Uploaded,
-                        -> error("Unexpected download report: $report")
+                        effectChannel.trySend(GameEffect.Message(GameMessage.DOWNLOAD_COMPLETE))
                     }
+                    TransferReport.StaleLocalSnapshot ->
+                        effectChannel.trySend(GameEffect.Message(GameMessage.STALE_LOCAL_FILES))
+                    is TransferReport.RequiresDirectOverwriteConfirmation,
+                    is TransferReport.Uploaded,
+                    -> error("Unexpected download report: $report")
                 }
-                .onFailure { showFailure(it, OperationContext.FTP) }
+            } catch (error: Throwable) {
+                showFailure(error, OperationContext.FTP)
+            }
         }
     }
 
@@ -643,6 +668,8 @@ class GameViewModel private constructor(
         val editable = files.loadEditable(identity) { session.requireCurrentOperationKey(key) }
         session.requireCurrentOperationKey(key)
         displayedCheatFile = com.nscheatmanager.app.cheats.parser.CheatFileParser().parse(editable.cheatText)
+        displayedNotes = CheatNotesParser.parse(editable.notesText)
+        hydratedNotesIdentity = identity
         localCheatOverride = displayedCheatFile
         localOverrideIdentity = identity
         displayedIdentity = identity
@@ -654,6 +681,8 @@ class GameViewModel private constructor(
         if (localOverrideIdentity?.titleId != next.game?.titleId || localOverrideIdentity?.buildId != next.game?.buildId) {
             localCheatOverride = null
             localOverrideIdentity = null
+            displayedNotes = emptyMap()
+            hydratedNotesIdentity = null
         }
         sessionState = next
         val currentKey = next.operationKey
@@ -693,9 +722,26 @@ class GameViewModel private constructor(
                 canDownload = next.gameValidated,
                 busy = next.connection in setOf(ConnectionState.Connecting, ConnectionState.Recognizing),
                 groups = groupRows(displayedCheatFile, identity, next),
+                sections = sections(displayedCheatFile, groupRows(displayedCheatFile, identity, next)),
             )
         }
+        hydrateNotesIfNeeded(next, identity)
         resumePendingTransfer(next)
+    }
+
+    /** The session owns cheat text, while title-level notes live beside it in the local mirror. */
+    private fun hydrateNotesIfNeeded(state: DeviceSessionState, identity: GameIdentity?) {
+        val key = state.operationKey ?: return
+        if (!state.gameValidated || identity == null || hydratedNotesIdentity == identity) return
+        hydratedNotesIdentity = identity
+        viewModelScope.launch {
+            val loaded = runCatching {
+                files.loadEditable(identity) { session.requireCurrentOperationKey(key) }
+            }.getOrNull() ?: return@launch
+            if (sessionState.operationKey != key || displayedIdentity != identity) return@launch
+            displayedNotes = CheatNotesParser.parse(loaded.notesText)
+            republishGroups()
+        }
     }
 
     private fun requestTransferAfterRecognition(transfer: PendingTransfer, profile: DeviceProfile) {
@@ -740,7 +786,13 @@ class GameViewModel private constructor(
 
     private fun republishGroups() {
         mutableUiState.update { current ->
-            current.copy(groups = groupRows(displayedCheatFile, displayedIdentity, sessionState))
+            groupRows(displayedCheatFile, displayedIdentity, sessionState).let { rows ->
+                current.copy(
+                    missingMirror = sessionState.gameValidated && displayedCheatFile == null,
+                    groups = rows,
+                    sections = sections(displayedCheatFile, rows),
+                )
+            }
         }
     }
 
@@ -757,6 +809,7 @@ class GameViewModel private constructor(
         val claim = key?.let { GroupClaim(it, group.name) }
         CheatGroupUiState(
             name = group.name,
+            note = displayedNotes[group.name]?.takeIf { it.isNotBlank() },
             checked = claim != null && synchronized(claimedExecutions) {
                 claim !in pendingUnchecks && (group.name in state.checkedGroups || claim in locallyCompleted)
             },
@@ -770,6 +823,32 @@ class GameViewModel private constructor(
             diagnostic = diagnostic,
             lastExecutedAtEpochMillis = state.lastExecutedAtEpochMillis[group.name],
         )
+    }
+
+    private fun sections(file: CheatFile?, rows: List<CheatGroupUiState>): List<CheatSectionUiState> {
+        val byName = rows.associateBy { it.name }
+        val result = mutableListOf<CheatSectionUiState>()
+        var header: CheatGroup? = null
+        val members = mutableListOf<CheatGroupUiState>()
+        fun commit() {
+            if (header != null || members.isNotEmpty()) {
+                result += CheatSectionUiState(
+                    id = header?.startLine ?: -1,
+                    name = header?.name,
+                    note = header?.name?.let(displayedNotes::get)?.takeIf { it.isNotBlank() },
+                    collapsed = header != null && header!!.startLine !in collapsedSections,
+                    groups = members.toList(),
+                )
+            }
+            members.clear()
+        }
+        file?.groups.orEmpty().forEach { group ->
+            val zero = group.instructions.singleOrNull()?.words?.let { it.size == 3 && it.all { word -> word == 0u } } == true
+            if (zero) { commit(); header = group; return@forEach }
+            if (group.instructions.isNotEmpty()) byName[group.name]?.let(members::add)
+        }
+        commit()
+        return result
     }
 
     private fun setCheckedLocally(groupName: String, checked: Boolean) {

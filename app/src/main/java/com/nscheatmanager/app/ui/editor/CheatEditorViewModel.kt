@@ -58,7 +58,7 @@ data class CheatEditorUiState(
 data class PendingEditorDiscard(val id: Long, val route: String?)
 
 sealed interface EditorEffect {
-    data class Saved(val identity: GameIdentity, val file: CheatFile) : EditorEffect
+    data class Saved(val identity: GameIdentity, val file: CheatFile, val notesText: String) : EditorEffect
     data class Error(val message: UserMessage) : EditorEffect
 }
 
@@ -197,7 +197,7 @@ class CheatEditorViewModel(
                         originalCheat = state.cheatText
                         originalNotes = state.notesText
                         if (flushAndClose()) {
-                            effectChannel.trySend(EditorEffect.Saved(identity, saved))
+                            effectChannel.trySend(EditorEffect.Saved(identity, saved, state.notesText))
                         } else {
                             mutableUiState.update { it.copy(isSaving = false) }
                             reportError(com.nscheatmanager.app.protocol.ProtocolError.Timeout("editor_flush", java.io.IOException()))
