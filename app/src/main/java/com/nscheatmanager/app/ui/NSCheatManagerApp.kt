@@ -81,12 +81,13 @@ data class SettingsActions(
     val setDefault: (String) -> Unit,
     val selectLanguage: (String) -> Unit,
     val showMemoryPage: (Boolean) -> Unit,
+    val detachDmntBeforeConnect: (Boolean) -> Unit,
     val editorChanged: (DeviceEditorUiState) -> Unit,
     val saveEditor: () -> Unit,
     val dismissEditor: () -> Unit,
 ) {
     companion object {
-        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {})
+        val None = SettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
     }
 }
 
@@ -285,6 +286,7 @@ fun NSCheatManagerApp(
                     onSetDefault = settingsActions.setDefault,
                     onLanguageSelected = settingsActions.selectLanguage,
                     onShowMemoryPageChanged = settingsActions.showMemoryPage,
+                    onDetachDmntBeforeConnectChanged = settingsActions.detachDmntBeforeConnect,
                     onEditorChanged = settingsActions.editorChanged,
                     onSaveEditor = settingsActions.saveEditor,
                     onDismissEditor = settingsActions.dismissEditor,

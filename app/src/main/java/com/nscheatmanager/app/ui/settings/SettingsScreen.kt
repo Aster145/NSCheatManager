@@ -67,6 +67,7 @@ data class SettingsUiState(
     val editor: DeviceEditorUiState? = null,
     val isSaving: Boolean = false,
     val showMemoryPage: Boolean = false,
+    val detachDmntBeforeConnect: Boolean = true,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,6 +84,7 @@ fun SettingsScreen(
     onSaveEditor: () -> Unit,
     onDismissEditor: () -> Unit,
     onShowMemoryPageChanged: (Boolean) -> Unit = {},
+    onDetachDmntBeforeConnectChanged: (Boolean) -> Unit = {},
     messages: Flow<SettingsMessage> = emptyFlow(),
     modifier: Modifier = Modifier,
 ) {
@@ -172,6 +174,18 @@ fun SettingsScreen(
                                 onClick = { onLanguageSelected(AppPreferences.ENGLISH_LANGUAGE_TAG) },
                                 label = { Text("English") },
                             )
+                        }
+                        HorizontalDivider()
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("auto-detach-setting"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("连接后自动分离 dmnt", style = MaterialTheme.typography.titleSmall)
+                                Text("点击连接时先通过 Noexs 7331 分离 dmnt。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = state.detachDmntBeforeConnect, onCheckedChange = onDetachDmntBeforeConnectChanged)
                         }
                         HorizontalDivider()
                         Row(

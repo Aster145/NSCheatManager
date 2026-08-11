@@ -7,6 +7,6 @@ class BuildContractTest {
     @Test
     fun productIdentityIsStable() {
         assertEquals("com.nscheatmanager.app", BuildConfig.APPLICATION_ID)
-        assertEquals("1.0.1", BuildConfig.VERSION_NAME)
+        assertEquals("1.0.2", BuildConfig.VERSION_NAME)
     }
 }

@@ -281,7 +281,7 @@ class GameViewModel private constructor(
         }
     }
 
-    fun onConnectionToggle() {
+    fun onConnectionToggle(detachBeforeConnect: Boolean = true) {
         if (sessionState.connection in setOf(
                 ConnectionState.Connecting,
                 ConnectionState.Recognizing,
@@ -292,8 +292,20 @@ class GameViewModel private constructor(
             session.disconnect()
             return
         }
-        selectedProfile()?.let(session::connectAndRecognize)
-            ?: effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE))
+        val profile = selectedProfile() ?: run {
+            effectChannel.trySend(GameEffect.Message(GameMessage.SELECT_DEVICE))
+            return
+        }
+        viewModelScope.launch {
+            if (detachBeforeConnect) {
+                // Keep this path identical to the manual button.  In particular,
+                // do not impose a shorter outer deadline that can cancel the
+                // compatibility handshake after its direct 0x18 attempt.
+                runCatching { session.detachDmnt() }
+                    .onFailure { showNoexsFailure(it) }
+            }
+            session.connectAndRecognize(profile)
+        }
     }
 
     fun onRecognizeRequested() {
