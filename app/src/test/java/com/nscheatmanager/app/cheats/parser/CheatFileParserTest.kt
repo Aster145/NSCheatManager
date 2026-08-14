@@ -8,6 +8,52 @@ class CheatFileParserTest {
     private val parser = CheatFileParser()
 
     @Test
+    fun parsesCurlyBraceHeaderAsAnOrdinaryExecutableGroup() {
+        val file = parser.parse(
+            "{任意名称}\n" +
+                "04000000 00000020 00000001\n" +
+                "[普通代码]\n" +
+                "04000000 00000024 00000002",
+        )
+
+        assertEquals(listOf("任意名称", "普通代码"), file.groups.map(CheatGroup::name))
+        assertEquals(listOf(1, 3), file.groups.map(CheatGroup::startLine))
+        assertEquals(1, file.groups[0].instructions.size)
+        assertEquals(1, file.groups[1].instructions.size)
+        assertTrue(file.diagnostics.isEmpty())
+    }
+
+    @Test
+    fun acceptsMultipleCurlyBraceHeadersWithoutSpecialSemantics() {
+        val file = parser.parse(
+            "{第一条}\n04000000 00000020 00000001\n" +
+                "{第二条}\n04000000 00000024 00000002",
+        )
+
+        assertEquals(listOf("第一条", "第二条"), file.groups.map(CheatGroup::name))
+        assertTrue(file.diagnostics.isEmpty())
+    }
+
+    @Test
+    fun malformedCurlyHeaderClearsPreviousGroupSoFollowingCodeIsNotMisassigned() {
+        val file = parser.parse(
+            "[先前代码]\n" +
+                "04000000 00000020 00000001\n" +
+                "{损坏]\n" +
+                "04000000 00000024 00000002",
+        )
+
+        assertEquals(1, file.groups.single().instructions.size)
+        assertEquals(
+            listOf(
+                CheatParseDiagnosticKind.MalformedGroupHeader,
+                CheatParseDiagnosticKind.InstructionBeforeGroup,
+            ),
+            file.diagnostics.map(CheatParseDiagnostic::kind),
+        )
+    }
+
+    @Test
     fun parsesGroupsAndLines() {
         val file = parser.parse(
             "[无限生命]\n" +

@@ -28,7 +28,7 @@ class CheatFileParser {
                     return@forEachIndexed
                 }
 
-                if (trimmed.startsWith("[")) {
+                if (looksLikeGroupHeader(trimmed)) {
                     currentGroup = null
                     diagnostics += CheatParseDiagnostic(lineNumber, CheatParseDiagnosticKind.MalformedGroupHeader)
                     return@forEachIndexed
@@ -65,11 +65,31 @@ class CheatFileParser {
     }
 
     private fun parseHeader(trimmedLine: String): String? {
-        if (!trimmedLine.startsWith('[') || !trimmedLine.endsWith(']')) return null
+        val opening = trimmedLine.firstOrNull() ?: return null
+        val closing = when (opening) {
+            '[' -> ']'
+            '{' -> '}'
+            else -> return null
+        }
+        if (!trimmedLine.endsWith(closing)) return null
 
         val name = trimmedLine.substring(1, trimmedLine.lastIndex).trim()
-        return name.takeIf { it.isNotEmpty() && '[' !in it && ']' !in it }
+        return name.takeIf {
+            it.isNotEmpty() &&
+                '[' !in it && ']' !in it &&
+                '{' !in it && '}' !in it
+        }
     }
+
+    /**
+     * Reset the active group for malformed bracket-like lines.  Otherwise a malformed
+     * `{name}` could leave a prior group active and accidentally attach later code to it.
+     */
+    private fun looksLikeGroupHeader(trimmedLine: String): Boolean =
+        trimmedLine.startsWith('[') ||
+            trimmedLine.startsWith('{') ||
+            trimmedLine.endsWith(']') ||
+            trimmedLine.endsWith('}')
 
     private data class MutableCheatGroup(
         val name: String,
