@@ -42,6 +42,7 @@ import com.nscheatmanager.app.R
 
 const val QQ_GROUP_NUMBER = "457965140"
 const val QQ_GROUP_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=fPqdvU2BW8s731iMkSW6OnVdc2ArUNe0ocLG%2FrbpMsEwJ4Ke1k7ksAmlkPkkMioj&busi_data=eyJncm91cENvZGUiOiI0NTc5NjUxNDAiLCJ0b2tlbiI6IkRRL1VKeG5BNmViMm9iRVVLTlUwYzVGK29nMG1IZGEyRWI0STh1TkszQ0NkeTdlTEtINTdqRUl3ZzJobGNNV0MiLCJ1aW4iOiIxNDUxMTc5NDgxIn0%3D&data=DbCHiE8dRZyXk6WkCg8btr6oOQrPK5vR_rCm0YXC5MrwseWitvCVjXfMvfh-qFBFJXSpAUVuzhIDT59CYoyWEA&svctype=4&tempid=h5_group_info"
+const val PROJECT_GITHUB_URL = "https://github.com/Aster145/NSCheatManager"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,6 +57,7 @@ fun AboutScreen(
         { intent: Intent -> context.tryStartActivity(intent) }
     }
     var showNoHandler by remember { mutableStateOf(false) }
+    var showGithubNoHandler by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -120,6 +122,46 @@ fun AboutScreen(
                 Text(
                     stringResource(R.string.license_gpl),
                     modifier = Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("github-link")
+                    .clickable {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_GITHUB_URL))
+                        showGithubNoHandler = !openIntent(intent)
+                    },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center,
+                    ) { Text("GH", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold) }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.project_github), style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            PROJECT_GITHUB_URL,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text("→", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
+                }
+            }
+            if (showGithubNoHandler) {
+                Text(
+                    stringResource(R.string.github_no_handler),
+                    modifier = Modifier.testTag("github-link-error"),
+                    color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

@@ -42,20 +42,16 @@ data class LoadedCheatDocument(
 data class RecognizedCurrentGame(
     val identity: GameIdentity,
     val document: LoadedCheatDocument,
-    val checkedGroups: Map<String, Long?>,
 )
 
 /** Persistence boundary which keeps the Task 7 process-local trust epoch authoritative. */
 interface SessionPersistence {
     suspend fun invalidate(deviceId: String)
     suspend fun saveValidated(deviceId: String, identity: GameIdentity)
+    /** Legacy storage API. Checkbox state is no longer read or written by the session. */
     suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Map<String, Long?>
-    suspend fun setChecked(
-        deviceId: String,
-        identity: GameIdentity,
-        groupName: String,
-        checked: Boolean,
-    )
+    /** Legacy storage API. Checkbox state is no longer read or written by the session. */
+    suspend fun setChecked(deviceId: String, identity: GameIdentity, groupName: String, checked: Boolean)
 }
 
 class DeviceRepositorySessionPersistence(
@@ -76,26 +72,12 @@ class DeviceRepositorySessionPersistence(
     }
 
     override suspend fun checkedGroups(deviceId: String, identity: GameIdentity): Map<String, Long?> =
-        repository.observeCheckedGroups(
-            deviceId,
-            identity.titleId.hex,
-            identity.buildId.hex,
-        ).first()
+        repository.observeCheckedGroups(deviceId, identity.titleId.hex, identity.buildId.hex).first()
 
-    override suspend fun setChecked(
-        deviceId: String,
-        identity: GameIdentity,
-        groupName: String,
-        checked: Boolean,
-    ) {
-        repository.setChecked(
-            deviceId = deviceId,
-            titleId = identity.titleId.hex,
-            buildId = identity.buildId.hex,
-            groupName = groupName,
-            checked = checked,
-        )
+    override suspend fun setChecked(deviceId: String, identity: GameIdentity, groupName: String, checked: Boolean) {
+        repository.setChecked(deviceId, identity.titleId.hex, identity.buildId.hex, groupName, checked)
     }
+
 }
 
 fun interface CheatLibrary {
@@ -145,8 +127,6 @@ class RecognizeCurrentGame(
         checkpoint()
         val document = cheatLibrary.load(identity)
         checkpoint()
-        val checked = persistence.checkedGroups(device.id, identity).toMap()
-        checkpoint()
         try {
             persistence.saveValidated(device.id, identity)
             checkpoint()
@@ -155,7 +135,7 @@ class RecognizeCurrentGame(
             withContext(NonCancellable) { persistence.invalidate(device.id) }
             throw cancelled
         }
-        return RecognizedCurrentGame(identity, document, checked)
+        return RecognizedCurrentGame(identity, document)
     }
 
     private fun validateIdentity(identity: GameIdentity) {

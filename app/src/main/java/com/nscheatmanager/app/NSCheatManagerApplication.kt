@@ -82,7 +82,7 @@ class AppDependencies(application: Application) : MainActivityDependencies {
                     SocketNoexsClient(profile.host, profile.noexsPort, Dispatchers.IO)
                 },
                 recognizeCurrentGame = RecognizeCurrentGame(persistence, MirrorCheatLibrary(mirror)),
-                executeCheatGroup = ExecuteCheatGroup(persistence = persistence),
+                executeCheatGroup = ExecuteCheatGroup(),
                 memoryUseCases = MemoryUseCases(),
             ),
         )

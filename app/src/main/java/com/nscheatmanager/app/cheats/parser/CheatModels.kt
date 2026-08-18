@@ -6,11 +6,13 @@ data class CheatFile(
     val diagnostics: List<CheatParseDiagnostic>,
 )
 
-/** One bracketed cheat group, retained in the order it occurred in the source file. */
+/** One cheat group, retained in the order it occurred in the source file. */
 data class CheatGroup(
     val name: String,
     val instructions: List<EncodedInstruction>,
     val startLine: Int,
+    /** File-local identity. Names are display-only and are intentionally allowed to repeat. */
+    val id: String = "line:$startLine",
 )
 
 /**

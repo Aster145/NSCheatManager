@@ -481,7 +481,7 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .testTag("cheat-${group.name}")
+                .testTag("cheat-${group.id}")
                 .semantics(mergeDescendants = true) {
                     contentDescription = accessibilityLabel
                     stateDescription = stateLabel
@@ -490,7 +490,7 @@ private fun CheatGroups(state: GameUiState, actions: GameScreenActions) {
                     value = group.checked,
                     enabled = group.executable && !group.executing,
                     role = Role.Checkbox,
-                    onValueChange = { checked -> actions.cheatChecked(group.name, group.checked, checked) },
+                    onValueChange = { checked -> actions.cheatChecked(group.id, group.checked, checked) },
                 )
                 .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -49,6 +49,8 @@ import kotlinx.coroutines.runBlocking
 
 data class CheatGroupUiState(
     val name: String,
+    /** Stable file-local key. The user-visible [name] is intentionally not unique. */
+    val id: String = name,
     val note: String? = null,
     val checked: Boolean = false,
     val executable: Boolean = true,
@@ -194,7 +196,7 @@ interface GameSessionGateway {
     fun currentOperationKey(): GameOperationKey?
     fun requireCurrentOperationKey(expected: GameOperationKey)
     suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport
-    suspend fun uncheckGroup(expected: GameOperationKey, groupName: String)
+    suspend fun uncheckGroup(expected: GameOperationKey, groupId: String)
     suspend fun readMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?): MemoryReadResult = error("Memory unavailable")
     suspend fun writeMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): Unit = error("Memory unavailable")
     suspend fun lockMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, bytes: ByteArray): LockedValue = error("Memory unavailable")
@@ -214,7 +216,7 @@ class GameViewModel private constructor(
     private val effectChannel = Channel<GameEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
     override val changes: Flow<Unit> = session.state.map { }
-    private data class GroupClaim(val key: GameOperationKey, val groupName: String)
+    private data class GroupClaim(val key: GameOperationKey, val groupId: String)
     private val claimedExecutions = linkedSetOf<GroupClaim>()
     private val locallyCompleted = linkedSetOf<GroupClaim>()
     private val pendingUnchecks = linkedSetOf<GroupClaim>()
@@ -347,12 +349,12 @@ class GameViewModel private constructor(
             .onFailure(::showFailure)
     }
 
-    fun onCheatChecked(groupName: String, wasChecked: Boolean, isChecked: Boolean) {
+    fun onCheatChecked(groupId: String, wasChecked: Boolean, isChecked: Boolean) {
         if (wasChecked == isChecked) return
-        val group = currentGroup(groupName) ?: return
+        val group = currentGroup(groupId) ?: return
         val key = sessionState.operationKey
         if (isChecked) {
-            val row = mutableUiState.value.groups.firstOrNull { it.name == groupName }
+            val row = mutableUiState.value.groups.firstOrNull { it.id == groupId }
             if (row?.executable != true || key == null) {
                 effectChannel.trySend(
                     GameEffect.Message(
@@ -365,7 +367,7 @@ class GameViewModel private constructor(
                 return
             }
             synchronized(claimedExecutions) {
-                if (!claimedExecutions.add(GroupClaim(key, groupName))) return
+                if (!claimedExecutions.add(GroupClaim(key, groupId))) return
             }
             republishGroups()
             viewModelScope.launch {
@@ -382,13 +384,13 @@ class GameViewModel private constructor(
                             ),
                         )
                     } else synchronized(claimedExecutions) {
-                        locallyCompleted += GroupClaim(key, groupName)
+                        locallyCompleted += GroupClaim(key, groupId)
                     }
                 } catch (error: Throwable) {
                     showFailure(error)
                 } finally {
                     synchronized(claimedExecutions) {
-                        val claim = GroupClaim(key, groupName)
+                        val claim = GroupClaim(key, groupId)
                         if (claim !in locallyCompleted) claimedExecutions.remove(claim)
                     }
                     republishGroups()
@@ -397,17 +399,17 @@ class GameViewModel private constructor(
         } else {
             if (key == null) return
             synchronized(claimedExecutions) {
-                val claim = GroupClaim(key, groupName)
+                val claim = GroupClaim(key, groupId)
                 locallyCompleted.remove(claim)
                 claimedExecutions.remove(claim)
                 pendingUnchecks += claim
             }
-            setCheckedLocally(groupName, false)
+            setCheckedLocally(groupId, false)
             viewModelScope.launch {
-                runCatching { session.uncheckGroup(key, groupName) }
+                runCatching { session.uncheckGroup(key, groupId) }
                     .onFailure {
-                        synchronized(claimedExecutions) { pendingUnchecks.remove(GroupClaim(key, groupName)) }
-                        setCheckedLocally(groupName, true)
+                        synchronized(claimedExecutions) { pendingUnchecks.remove(GroupClaim(key, groupId)) }
+                        setCheckedLocally(groupId, true)
                         showFailure(it)
                     }
             }
@@ -723,7 +725,7 @@ class GameViewModel private constructor(
                 val acknowledged = next.checkedGroups.mapTo(linkedSetOf()) { GroupClaim(key, it) }
                 locallyCompleted.removeAll(acknowledged)
                 claimedExecutions.removeAll(acknowledged)
-                pendingUnchecks.removeAll { it.key == key && it.groupName !in next.checkedGroups }
+                pendingUnchecks.removeAll { it.key == key && it.groupId !in next.checkedGroups }
             }
         }
         val staleConfirmation = synchronized(confirmationLock) {
@@ -835,27 +837,28 @@ class GameViewModel private constructor(
         val unsupported = invalid as? CheatValidationError.UnsupportedOpcode
         val diagnostic = invalid?.toUiDiagnostic()
         val key = state.operationKey
-        val claim = key?.let { GroupClaim(it, group.name) }
+        val claim = key?.let { GroupClaim(it, group.id) }
         CheatGroupUiState(
             name = group.name,
+            id = group.id,
             note = displayedNotes[group.name]?.takeIf { it.isNotBlank() },
             checked = claim != null && synchronized(claimedExecutions) {
-                claim !in pendingUnchecks && (group.name in state.checkedGroups || claim in locallyCompleted)
+                claim !in pendingUnchecks && (group.id in state.checkedGroups || claim in locallyCompleted)
             },
             executable = invalid == null && state.gameValidated,
-            executing = group.name in state.executingGroups || synchronized(claimedExecutions) {
+            executing = group.id in state.executingGroups || synchronized(claimedExecutions) {
                 claim in claimedExecutions
             },
             unsupportedLine = invalid?.line,
             unsupportedOpcode = unsupported?.opcode?.let { "0x${it.toString(16).uppercase()}" },
             validationDetail = invalid?.toDisplayText(),
             diagnostic = diagnostic,
-            lastExecutedAtEpochMillis = state.lastExecutedAtEpochMillis[group.name],
+            lastExecutedAtEpochMillis = state.lastExecutedAtEpochMillis[group.id],
         )
     }
 
     private fun sections(file: CheatFile?, rows: List<CheatGroupUiState>): List<CheatSectionUiState> {
-        val byName = rows.associateBy { it.name }
+        val byId = rows.associateBy { it.id }
         val result = mutableListOf<CheatSectionUiState>()
         var header: CheatGroup? = null
         val members = mutableListOf<CheatGroupUiState>()
@@ -874,19 +877,19 @@ class GameViewModel private constructor(
         file?.groups.orEmpty().forEach { group ->
             val zero = group.instructions.singleOrNull()?.words?.let { it.size == 3 && it.all { word -> word == 0u } } == true
             if (zero) { commit(); header = group; return@forEach }
-            if (group.instructions.isNotEmpty()) byName[group.name]?.let(members::add)
+            if (group.instructions.isNotEmpty()) byId[group.id]?.let(members::add)
         }
         commit()
         return result
     }
 
-    private fun setCheckedLocally(groupName: String, checked: Boolean) {
+    private fun setCheckedLocally(groupId: String, checked: Boolean) {
         mutableUiState.update { current ->
-            current.copy(groups = current.groups.map { if (it.name == groupName) it.copy(checked = checked) else it })
+            current.copy(groups = current.groups.map { if (it.id == groupId) it.copy(checked = checked) else it })
         }
     }
 
-    private fun currentGroup(name: String): CheatGroup? = displayedCheatFile?.groups?.firstOrNull { it.name == name }
+    private fun currentGroup(id: String): CheatGroup? = displayedCheatFile?.groups?.firstOrNull { it.id == id }
     private fun selectedProfile(): DeviceProfile? = mutableUiState.value.devices.firstOrNull {
         it.id == mutableUiState.value.selectedDeviceId
     }

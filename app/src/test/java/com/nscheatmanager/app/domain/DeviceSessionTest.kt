@@ -62,7 +62,7 @@ class DeviceSessionTest {
     }
 
     @Test
-    fun connectMovesThroughStatesRecognizesLoadsCheckedWithoutReplaying() = runTest {
+    fun connectMovesThroughStatesRecognizesWithoutRestoringCheckboxes() = runTest {
         val connectRelease = CompletableDeferred<Unit>()
         val recognizeRelease = CompletableDeferred<Unit>()
         val client = FakeSysBotbase(
@@ -90,7 +90,7 @@ class DeviceSessionTest {
         assertEquals(GAME_A, ready.game)
         assertTrue(ready.gameValidated)
         assertSame(DOCUMENT_A.cheatFile, ready.cheatFile)
-        assertEquals(setOf("Infinite HP"), ready.checkedGroups)
+        assertTrue(ready.checkedGroups.isEmpty())
         assertEquals(listOf(DEVICE_A.id to GAME_A), fixture.persistence.saved)
         assertTrue(client.writes.isEmpty())
         assertTrue(client.freezes.isEmpty())
@@ -121,7 +121,7 @@ class DeviceSessionTest {
         val transitional = fixture.session.state.value
         assertEquals(DEVICE_B, transitional.device)
         assertEquals(GAME_A, transitional.game)
-        assertEquals(setOf("A checked"), transitional.checkedGroups)
+        assertTrue(transitional.checkedGroups.isEmpty())
         assertFalse(transitional.gameValidated)
         assertEquals(ConnectionState.Recognizing, transitional.connection)
         assertTrue(events.indexOf("a.disconnect") < events.indexOf("b.connect"))
@@ -133,7 +133,7 @@ class DeviceSessionTest {
     }
 
     @Test
-    fun switchingBackReloadsEachDevicesOwnCheckedDisplayWithoutExecutingEitherSet() = runTest {
+    fun switchingDevicesNeverRestoresPersistedCheckboxes() = runTest {
         val firstA = FakeSysBotbase(GAME_A)
         val b = FakeSysBotbase(GAME_B)
         val secondA = FakeSysBotbase(GAME_A.copy(mainBase = 0x3000u))
@@ -148,11 +148,11 @@ class DeviceSessionTest {
         fixture.persistence.checked[Key(DEVICE_A.id, secondA.identity)] = setOf("A only")
 
         fixture.session.connectAndRecognize(DEVICE_A).join()
-        assertEquals(setOf("A only"), fixture.session.state.value.checkedGroups)
+        assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
         fixture.session.switchDevice(DEVICE_B).join()
-        assertEquals(setOf("B only"), fixture.session.state.value.checkedGroups)
+        assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
         fixture.session.switchDevice(DEVICE_A).join()
-        assertEquals(setOf("A only"), fixture.session.state.value.checkedGroups)
+        assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
         assertEquals(0x3000uL, fixture.session.state.value.game?.mainBase)
         assertTrue(firstA.writes.isEmpty() && b.writes.isEmpty() && secondA.writes.isEmpty())
     }
@@ -690,12 +690,12 @@ class DeviceSessionTest {
         secondRecognition.complete(Unit)
         refresh.join()
         assertEquals(ConnectionState.Ready, fixture.session.state.value.connection)
-        assertEquals(setOf("Persisted"), fixture.session.state.value.checkedGroups)
+        assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
         assertTrue(client.writes.isEmpty())
     }
 
     @Test
-    fun executingAGroupRequiresValidatedIdentityAndPersistsCheckOnlyAfterSuccess() = runTest {
+    fun executingAGroupMarksOnlyTheCurrentSessionUntilUncheck() = runTest {
         val client = FakeSysBotbase(GAME_A)
         val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
         assertSuspendThrows<SessionNotReadyException> {
@@ -706,16 +706,26 @@ class DeviceSessionTest {
         val report = fixture.session.executeGroup(STATIC_GROUP)
         assertEquals(ExecutionStatus.Complete, report.status)
         assertEquals(setOf("Write once"), fixture.session.state.value.checkedGroups)
-        assertEquals(
-            1_723_456_789_000L,
-            fixture.session.state.value.lastExecutedAtEpochMillis["Write once"],
-        )
-        assertEquals(setOf("Write once"), fixture.persistence.checked[Key(DEVICE_A.id, GAME_A)])
+        assertTrue(fixture.session.state.value.lastExecutedAtEpochMillis["Write once"] != null)
         assertEquals(1, client.writes.size)
 
         fixture.session.uncheckGroup("Write once")
         assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
-        assertTrue(fixture.persistence.checked[Key(DEVICE_A.id, GAME_A)].orEmpty().isEmpty())
+        assertEquals(1, client.writes.size)
+    }
+
+    @Test
+    fun disconnectClearsSessionOnlyCheckboxesWithoutWritingAgain() = runTest {
+        val client = FakeSysBotbase(GAME_A)
+        val fixture = fixture(clients = mutableMapOf(DEVICE_A.id to ArrayDeque(listOf(client))))
+        fixture.session.connectAndRecognize(DEVICE_A).join()
+        fixture.session.executeGroup(STATIC_GROUP)
+        assertEquals(setOf(STATIC_GROUP.id), fixture.session.state.value.checkedGroups)
+
+        fixture.session.disconnect().join()
+
+        assertTrue(fixture.session.state.value.checkedGroups.isEmpty())
+        assertTrue(fixture.session.state.value.lastExecutedAtEpochMillis.isEmpty())
         assertEquals(1, client.writes.size)
     }
 
@@ -1002,6 +1012,7 @@ class DeviceSessionTest {
         val STATIC_GROUP = CheatGroup(
             name = "Write once",
             startLine = 1,
+            id = "Write once",
             instructions = listOf(
                 EncodedInstruction(
                     words = listOf(0x04000000u, 0x00000020u, 0x12345678u),

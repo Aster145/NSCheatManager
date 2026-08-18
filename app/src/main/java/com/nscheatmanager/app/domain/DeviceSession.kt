@@ -76,8 +76,8 @@ class StaleGameOperationException : IllegalStateException("The validated game se
 class SessionNotReadyException(message: String = "A validated device session is required") :
     IllegalStateException(message)
 
-class CheatGroupBusyException(val groupName: String) :
-    IllegalStateException("Cheat group '$groupName' is already executing")
+class CheatGroupBusyException(val groupId: String) :
+    IllegalStateException("Cheat group '$groupId' is already executing")
 
 class SessionCloseTimeoutException(
     val timeoutMillis: Long,
@@ -153,6 +153,9 @@ class DeviceSession(
             current.copy(
                 connection = ConnectionState.Disconnected,
                 gameValidated = false,
+                checkedGroups = emptySet(),
+                executingGroups = emptySet(),
+                lastExecutedAtEpochMillis = emptyMap(),
                 error = null,
             )
         },
@@ -184,6 +187,9 @@ class DeviceSession(
                 mutableState.value = mutableState.value.copy(
                     connection = ConnectionState.Disconnected,
                     gameValidated = false,
+                    checkedGroups = emptySet(),
+                    executingGroups = emptySet(),
+                    lastExecutedAtEpochMillis = emptyMap(),
                     error = null,
                 )
             }
@@ -234,7 +240,7 @@ class DeviceSession(
     }
 
     suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport {
-        val claim = claimExecution(expected, group.name)
+        val claim = claimExecution(expected, group.id)
         try {
             return readyOperation(expected) { token, live, identity ->
                 val report = executeCheatGroup.execute(
@@ -248,13 +254,12 @@ class DeviceSession(
                     if (isConnectionLoss(error)) markAbnormalLoss(token, error)
                 }
                 if (report.status == ExecutionStatus.Complete) {
-                    val persisted = executeCheatGroup.checkedGroups(live.device, identity)
                     checkpoint(token)
                     updateIfCurrent(token) { current ->
                         current.copy(
-                            checkedGroups = immutableSet(persisted.keys),
+                            checkedGroups = immutableSet(current.checkedGroups + group.id),
                             lastExecutedAtEpochMillis = immutableMap(
-                                persisted.mapNotNull { (name, timestamp) -> timestamp?.let { name to it } }.toMap(),
+                                current.lastExecutedAtEpochMillis + (group.id to System.currentTimeMillis()),
                             ),
                         )
                     }
@@ -270,19 +275,18 @@ class DeviceSession(
         executeGroup(currentOperationKey() ?: throw SessionNotReadyException(), group)
 
     /** Clearing a checkbox is persistence/UI-only and intentionally sends no memory command. */
-    suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) = readyOperation(expected) { token, live, identity ->
-        executeCheatGroup.uncheck(live.device, identity, groupName)
+    suspend fun uncheckGroup(expected: GameOperationKey, groupId: String) = readyOperation(expected) { token, _, _ ->
         checkpoint(token)
         updateIfCurrent(token) { current ->
             current.copy(
-                checkedGroups = immutableSet(current.checkedGroups - groupName),
-                lastExecutedAtEpochMillis = immutableMap(current.lastExecutedAtEpochMillis - groupName),
+                checkedGroups = immutableSet(current.checkedGroups - groupId),
+                lastExecutedAtEpochMillis = immutableMap(current.lastExecutedAtEpochMillis - groupId),
             )
         }
     }
 
-    suspend fun uncheckGroup(groupName: String) =
-        uncheckGroup(currentOperationKey() ?: throw SessionNotReadyException(), groupName)
+    suspend fun uncheckGroup(groupId: String) =
+        uncheckGroup(currentOperationKey() ?: throw SessionNotReadyException(), groupId)
 
     suspend fun readValue(
         target: MemoryTarget,
@@ -470,11 +474,13 @@ class DeviceSession(
             current.copy(
                 device = device,
                 connection = ConnectionState.Connecting,
-                // Retain the visible game and checkbox history while explicitly revoking trust.
+                // Checkbox state is deliberately session-only: reconnect always starts fresh.
                 gameValidated = false,
                 activeLocks = if (current.device?.id == device.id) current.activeLocks else emptyMap(),
                 pendingLockCleanup = pendingSnapshot(device.id),
-                executingGroups = if (current.device?.id == device.id) current.executingGroups else emptySet(),
+                checkedGroups = emptySet(),
+                executingGroups = emptySet(),
+                lastExecutedAtEpochMillis = emptyMap(),
                 error = null,
             )
         },
@@ -600,12 +606,8 @@ class DeviceSession(
                 gameValidated = true,
                 cheatFile = recognized.document.cheatFile,
                 cheatRelativePath = recognized.document.relativePath,
-                checkedGroups = immutableSet(recognized.checkedGroups.keys),
-                lastExecutedAtEpochMillis = immutableMap(
-                    recognized.checkedGroups.mapNotNull { (name, timestamp) ->
-                        timestamp?.let { name to it }
-                    }.toMap(),
-                ),
+                checkedGroups = emptySet(),
+                lastExecutedAtEpochMillis = emptyMap(),
                 executingGroups = executionSnapshot(device.id, recognized.identity),
                 activeLocks = lockSnapshot(device.id),
                 pendingLockCleanup = pendingSnapshot(device.id),
@@ -796,7 +798,7 @@ class DeviceSession(
         }
     }
 
-    private fun claimExecution(expected: GameOperationKey, groupName: String): ExecutionClaim = synchronized(controlLock) {
+    private fun claimExecution(expected: GameOperationKey, groupId: String): ExecutionClaim = synchronized(controlLock) {
         val current = mutableState.value
         val device = current.device
         val identity = current.game
@@ -809,8 +811,8 @@ class DeviceSession(
         if (current.operationKey != expected || generation != expected.generation) {
             throw StaleGameOperationException()
         }
-        val claim = ExecutionClaim(device.id, gameKey(identity), groupName)
-        if (!executionClaims.add(claim)) throw CheatGroupBusyException(groupName)
+        val claim = ExecutionClaim(device.id, gameKey(identity), groupId)
+        if (!executionClaims.add(claim)) throw CheatGroupBusyException(groupId)
         mutableState.value = current.copy(
             executingGroups = executionSnapshotLocked(device.id, identity),
         )
@@ -926,7 +928,7 @@ class DeviceSession(
         immutableSet(
             executionClaims.asSequence()
                 .filter { it.deviceId == deviceId && it.game == gameKey(identity) }
-                .map { it.groupName }
+                .map { it.groupId }
                 .toCollection(linkedSetOf()),
         )
 
@@ -940,7 +942,7 @@ class DeviceSession(
 
     private data class LiveConnection(val device: DeviceProfile, val client: SysBotbase)
     private data class ActiveLock(val game: GameKey, val lock: LockedValue)
-    private data class ExecutionClaim(val deviceId: String, val game: GameKey, val groupName: String)
+    private data class ExecutionClaim(val deviceId: String, val game: GameKey, val groupId: String)
     private class SupersededSessionOperation : CancellationException("Session operation was superseded")
     private class FreezeCancelledBeforeCommit : CancellationException("Freeze was cancelled before commit")
 

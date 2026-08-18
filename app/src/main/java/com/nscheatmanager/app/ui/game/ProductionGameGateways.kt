@@ -61,8 +61,8 @@ class DeviceSessionGateway(private val delegate: DeviceSession) : GameSessionGat
     override suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport =
         delegate.executeGroup(expected, group)
 
-    override suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) {
-        delegate.uncheckGroup(expected, groupName)
+    override suspend fun uncheckGroup(expected: GameOperationKey, groupId: String) {
+        delegate.uncheckGroup(expected, groupId)
     }
 
     override suspend fun readMemory(expected: GameOperationKey, target: MemoryTarget, type: ValueType, count: Int?): MemoryReadResult = delegate.readValue(expected, target, type, count)

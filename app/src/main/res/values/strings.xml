@@ -76,6 +76,8 @@
     <string name="join_qq_group">Join QQ group</string>
     <string name="qq_group_number">Group: %1$s</string>
     <string name="qq_no_handler">No application can open the QQ group link.</string>
+    <string name="project_github">Project GitHub</string>
+    <string name="github_no_handler">No application can open the project link.</string>
     <string name="nav_game">Game</string>
     <string name="more_options">More options</string>
     <string name="nav_cheats">Cheats</string>

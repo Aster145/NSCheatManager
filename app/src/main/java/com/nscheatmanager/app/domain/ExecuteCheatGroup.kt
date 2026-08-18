@@ -9,21 +9,8 @@ import com.nscheatmanager.app.protocol.sysbot.SysBotbase
 
 class ExecuteCheatGroup(
     private val executor: CheatExecutor = CheatExecutor(),
-    private val persistence: SessionPersistence,
+    @Suppress("unused") private val persistence: SessionPersistence? = null,
 ) {
-    suspend fun checkedGroups(device: DeviceProfile, identity: GameIdentity): Map<String, Long?> =
-        persistence.checkedGroups(device.id, identity)
-
-    suspend fun uncheck(device: DeviceProfile, identity: GameIdentity, groupName: String) {
-        require(groupName.isNotBlank()) { "Cheat group name must not be blank" }
-        persistence.setChecked(
-            deviceId = device.id,
-            identity = identity,
-            groupName = groupName,
-            checked = false,
-        )
-    }
-
     suspend fun execute(
         device: DeviceProfile,
         identity: GameIdentity,
@@ -34,15 +21,6 @@ class ExecuteCheatGroup(
         checkpoint()
         val report = executor.execute(group, identity, client)
         checkpoint()
-        if (report.status == ExecutionStatus.Complete) {
-            persistence.setChecked(
-                deviceId = device.id,
-                identity = identity,
-                groupName = group.name,
-                checked = true,
-            )
-            checkpoint()
-        }
         return report
     }
 }

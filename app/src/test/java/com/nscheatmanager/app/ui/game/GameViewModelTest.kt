@@ -128,6 +128,32 @@ class GameViewModelTest {
     }
 
     @Test
+    fun duplicateNamesExecuteOnlyTheTappedGroupsMachineCode() = runTest(dispatcher) {
+        val first = CheatGroup(
+            name = "同名代码",
+            id = "line:1",
+            startLine = 1,
+            instructions = listOf(EncodedInstruction(listOf(0x04000000u, 0x20u, 1u), 2, "04000000 00000020 00000001")),
+        )
+        val second = CheatGroup(
+            name = "同名代码",
+            id = "line:4",
+            startLine = 4,
+            instructions = listOf(EncodedInstruction(listOf(0x04000000u, 0x24u, 2u), 5, "04000000 00000024 00000002")),
+        )
+        val session = FakeSessionGateway()
+        val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
+        session.state.value = readyState(CheatFile(listOf(first, second), emptyList()))
+        advanceUntilIdle()
+
+        viewModel.onCheatChecked(second.id, wasChecked = false, isChecked = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf(second.id), session.executionIds)
+        assertEquals(listOf(false, true), viewModel.uiState.value.groups.map(CheatGroupUiState::checked))
+    }
+
+    @Test
     fun completedExecutionRemainsLocallyCheckedAndClaimedUntilDelayedSessionAck() = runTest(dispatcher) {
         val session = FakeSessionGateway(acknowledgeExecution = false)
         val viewModel = GameViewModel(FakeDeviceStore(listOf(DEVICE), DEVICE.id), session, FakeGameFileGateway())
@@ -435,6 +461,7 @@ class GameViewModelTest {
         val connects = mutableListOf<DeviceProfile>()
         var manualRecognitions = 0
         val executions = mutableListOf<String>()
+        val executionIds = mutableListOf<String>()
         val unchecks = mutableListOf<String>()
 
         override fun connectAndRecognize(device: DeviceProfile) {
@@ -455,17 +482,18 @@ class GameViewModelTest {
         override suspend fun executeGroup(expected: GameOperationKey, group: CheatGroup): ExecutionReport {
             requireCurrentOperationKey(expected)
             executions += group.name
+            executionIds += group.id
             executeRelease.await()
             if (acknowledgeExecution) {
-                state.value = state.value.copy(checkedGroups = state.value.checkedGroups + group.name)
+                state.value = state.value.copy(checkedGroups = state.value.checkedGroups + group.id)
             }
             return executionReport
         }
 
-        override suspend fun uncheckGroup(expected: GameOperationKey, groupName: String) {
+        override suspend fun uncheckGroup(expected: GameOperationKey, groupId: String) {
             requireCurrentOperationKey(expected)
-            unchecks += groupName
-            state.value = state.value.copy(checkedGroups = state.value.checkedGroups - groupName)
+            unchecks += groupId
+            state.value = state.value.copy(checkedGroups = state.value.checkedGroups - groupId)
         }
 
         override suspend fun close() = Unit
@@ -632,11 +660,13 @@ class GameViewModelTest {
             "Write once",
             listOf(EncodedInstruction(listOf(0x04000000u, 0x20u, 1u), 2, "04000000 00000020 00000001")),
             1,
+            id = "Write once",
         )
         val UNSUPPORTED = CheatGroup(
             "Key trigger",
             listOf(EncodedInstruction(listOf(0x80000001u), 18, "80000001")),
             17,
+            id = "Key trigger",
         )
 
         fun readyState(
